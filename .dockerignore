@@ -1,0 +1,22 @@
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+
+# Build artifacts (sẽ được generate trong Docker)
+services/api/static/
+
+# Secrets & IDE
+.env
+.git/
+.gitignore
+**/.DS_Store
+
+# Docs (không cần trong image)
+docs/
+README.md

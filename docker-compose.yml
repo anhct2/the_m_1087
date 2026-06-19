@@ -1,0 +1,97 @@
+version: "3.9"
+
+# ============================================================
+#  87 TCS — Smart Building Monitor
+#  Tất cả services chạy trên VPS HK
+#
+#  Quickstart:
+#    cp .env.example .env && vim .env
+#    docker compose up -d --build
+#
+#  Production (nginx + SSL):
+#    docker compose --profile prod up -d --build
+# ============================================================
+
+x-pg-env: &pg-env
+  POSTGRES_HOST: ${POSTGRES_HOST}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5555}
+  POSTGRES_DB:   ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASS: ${POSTGRES_PASS}
+
+services:
+
+  # ── API + React SPA ────────────────────────────────────────
+  # Build context = repo root → Dockerfile có thể COPY cả frontend/ lẫn services/api/
+  api:
+    build:
+      context: .                        # repo root
+      dockerfile: services/api/Dockerfile
+    image: tcs-api:latest
+    container_name: tcs-api
+    restart: unless-stopped
+    environment:
+      <<: *pg-env
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-changeme}
+    ports:
+      - "8088:8088"
+    networks: [tcs]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Worker: Gate ↔ Frigate mapper ──────────────────────────
+  worker-mapper:
+    build:
+      context: ./services/worker-mapper
+      dockerfile: Dockerfile
+    image: tcs-worker-mapper:latest
+    container_name: tcs-worker-mapper
+    restart: unless-stopped
+    environment:
+      <<: *pg-env
+      MAPPER_INTERVAL_SEC:   ${MAPPER_INTERVAL_SEC:-300}
+      MAPPER_WINDOW_SEC:     ${MAPPER_WINDOW_SEC:-120}
+      MAPPER_LOOKBACK_HOURS: ${MAPPER_LOOKBACK_HOURS:-2}
+      MAPPER_DEVICE_NAME:    ${MAPPER_DEVICE_NAME:-frigate-87tcs}
+    networks: [tcs]
+
+  # ── Worker: Face recognition (scaffold) ────────────────────
+  worker-face:
+    build:
+      context: ./services/worker-face
+      dockerfile: Dockerfile
+    image: tcs-worker-face:latest
+    container_name: tcs-worker-face
+    restart: unless-stopped
+    environment:
+      <<: *pg-env
+      FACE_ENABLED:   ${FACE_ENABLED:-false}
+      COMPREFACE_URL: ${COMPREFACE_URL:-}
+      COMPREFACE_KEY: ${COMPREFACE_KEY:-}
+    networks: [tcs]
+    profiles: [face]
+
+  # ── Nginx (prod) ───────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: tcs-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [tcs]
+    profiles: [prod]
+
+networks:
+  tcs:
+    driver: bridge

@@ -1,0 +1,59 @@
+/* ============================================================
+   87 TCS Design Tokens — IBM Plex · oklch security-console
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --bg0: oklch(0.155 0.006 255);
+  --bg1: oklch(0.200 0.007 255);
+  --bg2: oklch(0.240 0.008 255);
+  --bg3: oklch(0.285 0.009 255);
+  --ln:  oklch(0.325 0.010 255);
+  --ln2: oklch(0.415 0.012 255);
+
+  --thi: oklch(0.965 0.004 255);
+  --tmd: oklch(0.755 0.008 255);
+  --tlo: oklch(0.555 0.009 255);
+  --txl: oklch(0.435 0.009 255);
+
+  --in:  oklch(0.78 0.15 152);
+  --inb: oklch(0.78 0.15 152 / 0.13);
+  --in3: oklch(0.78 0.15 152 / 0.30);
+
+  --out: oklch(0.74 0.12 248);
+  --otb: oklch(0.74 0.12 248 / 0.13);
+  --ot3: oklch(0.74 0.12 248 / 0.30);
+
+  --alm: oklch(0.68 0.20 25);
+  --alb: oklch(0.68 0.20 25 / 0.15);
+
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; background: oklch(0.14 0.005 255); }
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-thumb { background: var(--ln2); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+body {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--thi);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* utils */
+.mono { font-family: var(--mono); }
+.thi  { color: var(--thi); }
+.tmd  { color: var(--tmd); }
+.tlo  { color: var(--tlo); }
+.txl  { color: var(--txl); }
+.c-in  { color: var(--in); }
+.c-out { color: var(--out); }

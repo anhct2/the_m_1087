@@ -1,0 +1,57 @@
+/* ── Badge ── */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: .08em; padding: 2px 7px; border-radius: 4px;
+  text-transform: uppercase; flex-shrink: 0;
+}
+.badgeIn  { color: var(--in);  background: var(--inb); box-shadow: inset 0 0 0 1px var(--in3); }
+.badgeOut { color: var(--out); background: var(--otb); box-shadow: inset 0 0 0 1px var(--ot3); }
+
+/* ── Method tag ── */
+.methodTag {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--tlo);
+  text-transform: capitalize;
+}
+
+/* ── Spinner ── */
+.spinner {
+  display: inline-block; border-radius: 50%;
+  border: 2px solid var(--ln); border-top-color: var(--in);
+  animation: spin .7s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg) } }
+
+/* ── Stat card ── */
+.statCard {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 14px; min-width: 90px;
+  background: var(--bg2); border: 1px solid var(--ln); border-radius: var(--r-md);
+}
+.statVal {
+  font-family: var(--mono); font-size: 22px; font-weight: 500;
+  line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+.statKey { font-size: 9.5px; color: var(--tlo); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.stat_in  .statVal { color: var(--in); }
+.stat_out .statVal { color: var(--out); }
+.stat_alm .statVal { color: var(--alm); }
+
+/* ── Empty ── */
+.empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  color: var(--txl); padding: 40px;
+}
+.emptyIcon { font-size: 34px; opacity: .25; }
+.empty p   { font-size: 12.5px; }
+
+/* ── Col head ── */
+.colHead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; border-bottom: 1px solid var(--ln); flex-shrink: 0;
+  background: var(--bg1);
+}
+.colTitle { font-size: 11.5px; font-weight: 600; color: var(--tmd); letter-spacing: .01em; }
+.colRight { font-family: var(--mono); font-size: 10px; color: var(--txl); letter-spacing: .04em; }
