@@ -197,3 +197,19 @@
 .relThumb { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:repeating-linear-gradient(115deg, oklch(0.26 0.01 255) 0 4px, oklch(0.22 0.01 255) 4px 8px); min-height:0; }
 .relInfo  { padding:5px 8px; font-family:var(--mono); font-size:10.5px; color:var(--tlo); display:flex; flex-direction:column; gap:2px; }
 .relCam   { color:var(--thi); font-weight:600; }
+
+/* ── Mobile responsive ── */
+@media (max-width: 768px) {
+  .filters { gap: 6px; padding: 8px 10px; }
+  .fdate { flex-wrap: wrap; }
+  .dateInput { font-size: 11px; padding: 4px 7px; }
+  .finput { width: 120px; font-size: 11px; }
+  .body { flex-direction: column; }
+  .feedCol { flex: 1; min-width: 0; border-right: none; }
+  .detCol { display: none; }
+  .dualThumb { display: none; }
+}
+@media (max-width: 480px) {
+  .flabel, .fdate .dateSep { display: none; }
+  .fgroup { flex-wrap: wrap; }
+}

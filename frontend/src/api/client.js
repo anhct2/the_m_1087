@@ -53,4 +53,8 @@ export const getSessionClips = sessionId =>
 // ── Users ───────────────────────────────────────────────
 export const getUsers = () => api.get('/api/users')
 
+// ── Rooms ───────────────────────────────────────────────────
+export const getRoomStatus  = ()     => api.get('/api/rooms/status')
+export const getRoomHistory = (room) => api.get(`/api/rooms/${encodeURIComponent(room)}/history`)
+
 export default api
