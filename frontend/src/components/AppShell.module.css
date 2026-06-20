@@ -115,6 +115,17 @@
   transition: max-width .2s ease, opacity .15s ease;
 }
 
+/* ── Top bar (collapse toggle) ── */
+.sideTopBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--ln);
+  flex-shrink: 0;
+}
+.collapsed .sideTopBar { justify-content: center; }
+
 /* ── Bottom ── */
 .sideBottom {
   padding: 8px;

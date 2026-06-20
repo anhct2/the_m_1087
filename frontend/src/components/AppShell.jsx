@@ -8,6 +8,7 @@ const NAV = [
   { to: '/dashboard', icon: 'dashboard', label: 'Tổng quan' },
   { to: '/gate-log',  icon: 'gate',      label: 'Gate Log' },
   { to: '/rooms',     icon: 'building',  label: 'Phòng' },
+  { to: '/room-log',  icon: 'calendar',  label: 'Lịch phòng' },
 ]
 
 const Clock = memo(function Clock() {
@@ -51,6 +52,13 @@ export default function AppShell() {
       {mobileOpen && <div className={s.mobileOverlay} onClick={closeMobile} />}
 
       <aside className={`${s.sidebar} ${collapsed ? s.collapsed : ''} ${mobileOpen ? s.mobileOpen : ''}`}>
+        <div className={s.sideTopBar}>
+          <button className={`${s.iconBtn} ${s.collapseBtn}`} onClick={toggleCollapse}
+            title={collapsed ? 'Mở rộng' : 'Thu gọn'}>
+            <Icon name={collapsed ? 'chevron' : 'chevLeft'} size={13} />
+          </button>
+        </div>
+
         <div className={s.brand}>
           <div className={s.brandMark}><span className={s.brandDot} /></div>
           <div className={s.brandText}>
@@ -75,10 +83,6 @@ export default function AppShell() {
             <div className={s.userAvatar}><Icon name="user" size={13} /></div>
             <div className={s.userName}>{user?.username}</div>
           </div>
-          <button className={`${s.iconBtn} ${s.collapseBtn}`} onClick={toggleCollapse}
-            title={collapsed ? 'Mở rộng' : 'Thu gọn'}>
-            <Icon name={collapsed ? 'chevron' : 'chevLeft'} size={13} />
-          </button>
           <button className={s.iconBtn} onClick={logout} title="Đăng xuất">
             <Icon name="logout" size={14} />
           </button>

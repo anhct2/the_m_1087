@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback, memo } from 'react'
+import { useEffect, useState, useCallback, useRef, memo } from 'react'
 import { getRoomStatus, getRoomHistory } from '../api/client'
 import { Spinner, Icon } from '../components/UI'
 import s from './Rooms.module.css'
 
 const snapUrl = id => id ? `/api/media/snapshot/${id}` : null
-
-const VN_TZ = 'Asia/Ho_Chi_Minh'
+const VN_TZ  = 'Asia/Ho_Chi_Minh'
+const FLOORS = [2, 3, 4, 5, 6, 7]
 
 function timeAgo(iso) {
   if (!iso) return null
@@ -28,7 +28,79 @@ function fmtDatetime(iso) {
   )
 }
 
-/* ── Room Card ─────────────────────────────────────────────── */
+/* ── Room lightbox (navigates within one room's image events) ── */
+function RoomLightbox({ events, idx, onClose, onNav }) {
+  const e       = events[idx]
+  const hasPrev = idx > 0
+  const hasNext = idx < events.length - 1
+  const [imgErr, setImgErr] = useState(false)
+
+  const prevIdx = useRef(null)
+  if (prevIdx.current !== idx) { prevIdx.current = idx; if (imgErr) setImgErr(false) }
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  useEffect(() => {
+    const onKey = k => {
+      if (k.key === 'Escape')                onClose()
+      if (k.key === 'ArrowLeft'  && hasPrev) onNav(idx - 1)
+      if (k.key === 'ArrowRight' && hasNext) onNav(idx + 1)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [idx, hasPrev, hasNext, onClose, onNav])
+
+  const src = snapUrl(e.event_id_n1)
+
+  return (
+    <div className={s.lbOverlay} onClick={onClose}>
+      {/* Camera badge */}
+      <span className={s.lbCamLabel}>N1</span>
+
+      {/* Close */}
+      <button className={s.lbClose} onClick={onClose}>
+        <Icon name="x" size={18} />
+      </button>
+
+      {/* Image */}
+      {src && !imgErr
+        ? <img src={src} alt="N1" className={s.lbImg}
+            onClick={ev => ev.stopPropagation()}
+            onError={() => setImgErr(true)} />
+        : <div className={s.lbNoSig} onClick={ev => ev.stopPropagation()}>NO SIGNAL</div>
+      }
+
+      {/* Side nav */}
+      <button
+        className={`${s.lbNav} ${s.lbNavLeft}`}
+        disabled={!hasPrev}
+        onClick={ev => { ev.stopPropagation(); onNav(idx - 1) }}
+      >
+        <Icon name="chevLeft" size={24} />
+      </button>
+      <button
+        className={`${s.lbNav} ${s.lbNavRight}`}
+        disabled={!hasNext}
+        onClick={ev => { ev.stopPropagation(); onNav(idx + 1) }}
+      >
+        <Icon name="chevron" size={24} />
+      </button>
+
+      {/* Bottom meta */}
+      <div className={s.lbMeta}>
+        <span className={s.lbDirIn}>↓ Vào</span>
+        <span className={s.lbName}>{e.user_name || '—'}</span>
+        <span className={s.lbTime}>{fmtDatetime(e.event_time)}</span>
+        <span className={s.lbCounter}>{idx + 1} / {events.length}</span>
+      </div>
+    </div>
+  )
+}
+
+/* ── Room Card ────────────────────────────────────────────────── */
 function RoomCard({ data, onClick }) {
   const { room, occupied, last_event, last_user, today_count } = data
   return (
@@ -52,16 +124,20 @@ function RoomCard({ data, onClick }) {
   )
 }
 
-/* ── History Row with thumbnail ─────────────────────────────── */
-const HistRow = memo(function HistRow({ event: e }) {
+/* ── History Row ──────────────────────────────────────────────── */
+const HistRow = memo(function HistRow({ event: e, onImgClick }) {
   const isIn = e.direction === 'incoming'
   const thumb = isIn ? snapUrl(e.event_id_n1) : null
   const [imgErr, setImgErr] = useState(false)
+  const hasImg = !!thumb && !imgErr
 
   return (
     <div className={`${s.histRow} ${isIn ? s.histIn : s.histOut}`}>
       {isIn && (
-        <div className={s.histThumb}>
+        <div
+          className={`${s.histThumb} ${hasImg && onImgClick ? s.histThumbClick : ''}`}
+          onClick={hasImg && onImgClick ? onImgClick : undefined}
+        >
           {thumb && !imgErr
             ? <img src={thumb} alt="N1" className={s.histThumbImg} onError={() => setImgErr(true)} />
             : <div className={s.histThumbEmpty} />}
@@ -78,14 +154,16 @@ const HistRow = memo(function HistRow({ event: e }) {
   )
 })
 
-/* ── Drawer ─────────────────────────────────────────────────── */
+/* ── Drawer ───────────────────────────────────────────────────── */
 function Drawer({ room, onClose }) {
-  const [hist, setHist] = useState(null)
+  const [hist,    setHist]    = useState(null)
   const [loading, setLoading] = useState(false)
+  const [lbIdx,   setLbIdx]   = useState(null)
 
   useEffect(() => {
     if (!room) return
     setHist(null)
+    setLbIdx(null)
     setLoading(true)
     getRoomHistory(room.room)
       .then(r => setHist(r.data))
@@ -94,6 +172,8 @@ function Drawer({ room, onClose }) {
   }, [room?.room])
 
   if (!room) return null
+
+  const imgEvents = hist?.events.filter(e => e.direction === 'incoming' && e.event_id_n1) || []
 
   return (
     <>
@@ -146,23 +226,39 @@ function Drawer({ room, onClose }) {
                 {hist.events.length === 0 && (
                   <div className={s.histEmpty}>Chưa có dữ liệu</div>
                 )}
-                {hist.events.map((e, i) => (
-                  <HistRow key={i} event={e} />
-                ))}
+                {hist.events.map((e, i) => {
+                  const imgIdx = imgEvents.indexOf(e)
+                  return (
+                    <HistRow
+                      key={i}
+                      event={e}
+                      onImgClick={imgIdx >= 0 ? () => setLbIdx(imgIdx) : undefined}
+                    />
+                  )
+                })}
               </div>
             </>
           ) : null}
         </div>
       </aside>
+
+      {lbIdx != null && imgEvents.length > 0 && (
+        <RoomLightbox
+          events={imgEvents}
+          idx={lbIdx}
+          onClose={() => setLbIdx(null)}
+          onNav={setLbIdx}
+        />
+      )}
     </>
   )
 }
 
-/* ── Main ───────────────────────────────────────────────────── */
+/* ── Main ─────────────────────────────────────────────────────── */
 export default function Rooms() {
-  const [rooms, setRooms] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState(null)
+  const [rooms,     setRooms]     = useState([])
+  const [loading,   setLoading]   = useState(true)
+  const [selected,  setSelected]  = useState(null)
   const [updatedAt, setUpdatedAt] = useState(null)
 
   const load = useCallback(() => {
@@ -178,12 +274,8 @@ export default function Rooms() {
     return () => clearInterval(t)
   }, [load])
 
-  const byFloor = {}
-  rooms.forEach(r => {
-    if (!byFloor[r.floor]) byFloor[r.floor] = []
-    byFloor[r.floor].push(r)
-  })
-
+  const roomMap = {}
+  rooms.forEach(r => { roomMap[r.room] = r })
   const occupiedCount = rooms.filter(r => r.occupied).length
 
   if (loading) return (
@@ -201,7 +293,7 @@ export default function Rooms() {
           </span>
         </div>
         <button className={s.refreshBtn} onClick={load}>
-          <Icon name="arrowIn" size={12} />
+          <Icon name="refresh" size={13} />
           Làm mới
         </button>
       </div>
@@ -218,17 +310,30 @@ export default function Rooms() {
         </div>
       </div>
 
-      <div className={s.floorList}>
-        {Object.keys(byFloor).sort((a, b) => +a - +b).map(floor => (
-          <div key={floor} className={s.floorSection}>
-            <div className={s.floorLabel}>Tầng {floor}</div>
-            <div className={s.floorCards}>
-              {byFloor[floor].map(room => (
-                <RoomCard key={room.room} data={room} onClick={setSelected} />
-              ))}
-            </div>
-          </div>
+      {/* 6-column grid: rows x02 (top) and x01 (bottom) */}
+      <div className={s.roomGrid}>
+        <div />
+        {FLOORS.map(f => (
+          <div key={f} className={s.floorHdr}>Tầng {f}</div>
         ))}
+
+        {/* Row x02 */}
+        <div className={s.rowLbl}>02</div>
+        {FLOORS.map(f => {
+          const room = roomMap[`P.${f}02`]
+          return room
+            ? <RoomCard key={`P.${f}02`} data={room} onClick={setSelected} />
+            : <div key={`e${f}02`} className={s.emptySlot} />
+        })}
+
+        {/* Row x01 */}
+        <div className={s.rowLbl}>01</div>
+        {FLOORS.map(f => {
+          const room = roomMap[`P.${f}01`]
+          return room
+            ? <RoomCard key={`P.${f}01`} data={room} onClick={setSelected} />
+            : <div key={`e${f}01`} className={s.emptySlot} />
+        })}
       </div>
 
       <Drawer room={selected} onClose={() => setSelected(null)} />

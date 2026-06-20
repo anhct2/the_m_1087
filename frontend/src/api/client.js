@@ -54,7 +54,9 @@ export const getSessionClips = sessionId =>
 export const getUsers = () => api.get('/api/users')
 
 // ── Rooms ───────────────────────────────────────────────────
-export const getRoomStatus  = ()     => api.get('/api/rooms/status')
-export const getRoomHistory = (room) => api.get(`/api/rooms/${encodeURIComponent(room)}/history`)
+export const getRoomStatus  = ()           => api.get('/api/rooms/status')
+export const getRoomHistory = (room)       => api.get(`/api/rooms/${encodeURIComponent(room)}/history`)
+export const getRoomMonthly = (year, month) => api.get('/api/rooms/monthly', { params: { year, month } })
+export const getRoomDay     = (room, date) => api.get(`/api/rooms/${encodeURIComponent(room)}/day`, { params: { date } })
 
 export default api
