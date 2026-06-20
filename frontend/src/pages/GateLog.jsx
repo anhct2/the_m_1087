@@ -5,12 +5,14 @@ import s from './GateLog.module.css'
 
 const VN_TZ = 'Asia/Ho_Chi_Minh'
 const PAGE   = 50
+const ROOMS  = [
+  'P.201','P.202','P.301','P.302','P.401','P.402',
+  'P.501','P.502','P.601','P.602','P.701','P.702',
+]
 
-/* ── Proxy URL: ảnh đi qua backend (giải quyết cross-origin Frigate auth) ── */
 const snapProxy = eventId =>
   eventId ? `/api/media/snapshot/${eventId}` : null
 
-/* ── Helpers ── */
 const fmt = {
   time: iso => iso ? new Date(iso).toLocaleTimeString('vi-VN', {
     hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false, timeZone:VN_TZ
@@ -33,7 +35,134 @@ const fmt = {
 const todayStr     = () => new Date().toLocaleDateString('sv-SE', { timeZone: VN_TZ })
 const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate()-1); return d.toLocaleDateString('sv-SE', { timeZone:VN_TZ }) }
 
-/* ── Thumb ── */
+/* ── Fullscreen lightbox (Facebook-style) ───────────────────── */
+function Lightbox({ sessions, idx, camera, onClose, onNav }) {
+  const sess    = sessions[idx]
+  const hasPrev = idx > 0
+  const hasNext = idx < sessions.length - 1
+  const [imgErr, setImgErr] = useState(false)
+
+  const prevKey = useRef(null)
+  const key = `${idx}-${camera}`
+  if (prevKey.current !== key) { prevKey.current = key; if (imgErr) setImgErr(false) }
+
+  const eventId = camera === 'N1' ? sess.event_id_n1 : sess.event_id_s1
+  const src     = snapProxy(eventId)
+  const isIn    = sess.direction === 'incoming'
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  useEffect(() => {
+    const onKey = e => {
+      if (e.key === 'Escape')     onClose()
+      if (e.key === 'ArrowLeft'  && hasPrev) onNav(idx - 1)
+      if (e.key === 'ArrowRight' && hasNext) onNav(idx + 1)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [idx, hasPrev, hasNext, onClose, onNav])
+
+  return (
+    <div className={s.lbOverlay} onClick={onClose}>
+      {/* Camera tag */}
+      <span className={s.lbCamTag}>{camera}</span>
+
+      {/* Close */}
+      <button className={s.lbClose} onClick={onClose}>
+        <Icon name="x" size={18} />
+      </button>
+
+      {/* Image */}
+      {src && !imgErr
+        ? <img
+            src={src} alt={camera} className={s.lbImg}
+            onClick={e => e.stopPropagation()}
+            onError={() => setImgErr(true)}
+          />
+        : <div className={s.lbNoSig} onClick={e => e.stopPropagation()}>
+            NO SIGNAL
+          </div>
+      }
+
+      {/* Nav arrows */}
+      <button
+        className={`${s.lbNav} ${s.lbNavLeft}`}
+        disabled={!hasPrev}
+        onClick={e => { e.stopPropagation(); onNav(idx - 1) }}
+      >
+        <Icon name="chevLeft" size={24} />
+      </button>
+      <button
+        className={`${s.lbNav} ${s.lbNavRight}`}
+        disabled={!hasNext}
+        onClick={e => { e.stopPropagation(); onNav(idx + 1) }}
+      >
+        <Icon name="chevron" size={24} />
+      </button>
+
+      {/* Bottom meta */}
+      <div className={s.lbMeta}>
+        <span className={s.lbMetaName}>{sess.user_name || 'Unknown'}</span>
+        <span className={s.lbMetaDir} style={{ color: isIn ? 'var(--in)' : 'var(--out)' }}>
+          {isIn ? '↓ Vào' : '↑ Ra'}{sess.label && sess.label !== sess.user_name ? ` · ${sess.label}` : ''}
+        </span>
+        <span className={s.lbMetaTime}>{fmt.datetime(sess.event_time_local)}</span>
+        <span className={s.lbCounter}>{idx + 1} / {sessions.length}</span>
+      </div>
+    </div>
+  )
+}
+
+/* ── Room multi-select picker ────────────────────────────────── */
+function RoomPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const toggle = room =>
+    onChange(value.includes(room) ? value.filter(r => r !== room) : [...value, room])
+
+  const label = value.length === 0 ? 'Tất cả phòng'
+    : value.length === 1 ? value[0]
+    : `${value.length} phòng`
+
+  return (
+    <div className={s.roomPicker} ref={ref}>
+      <button
+        className={`${s.pickerTrigger} ${value.length > 0 ? s.pickerTriggerOn : ''}`}
+        onClick={() => setOpen(v => !v)}
+      >
+        {label}
+        <Icon name="chevron" size={10} style={{ transform: open ? 'rotate(-90deg)' : 'rotate(90deg)', transition: 'transform .15s' }} />
+      </button>
+      {open && (
+        <div className={s.pickerDropdown}>
+          <div className={s.pickerGrid}>
+            {ROOMS.map(r => (
+              <label key={r} className={`${s.pickerItem} ${value.includes(r) ? s.pickerItemOn : ''}`}>
+                <input type="checkbox" checked={value.includes(r)} onChange={() => toggle(r)} />
+                {r}
+              </label>
+            ))}
+          </div>
+          {value.length > 0 && (
+            <button className={s.pickerClear} onClick={() => onChange([])}>Xóa bộ lọc</button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Thumb ────────────────────────────────────────────────────── */
 const Thumb = memo(function Thumb({ src, label, showRec }) {
   const [err, setErr] = useState(false)
   const prevSrc = useRef(null)
@@ -50,19 +179,26 @@ const Thumb = memo(function Thumb({ src, label, showRec }) {
   )
 })
 
-function DualThumb({ direction, eventIdN1, eventIdS1 }) {
+function DualThumb({ direction, eventIdN1, eventIdS1, onThumbClick }) {
   const isIn = direction === 'incoming'
   const cams = isIn
     ? [{ label:'N1', id:eventIdN1 }, { label:'S1', id:eventIdS1, rec:true }]
     : [{ label:'S1', id:eventIdS1 }, { label:'N1', id:eventIdN1, rec:true }]
   return (
     <div className={s.dualThumb}>
-      {cams.map(c => <Thumb key={c.label} src={snapProxy(c.id)} label={c.label} showRec={!!c.rec} />)}
+      {cams.map(c => (
+        <div key={c.label} className={s.thumbWrap}
+          onClick={e => { e.stopPropagation(); onThumbClick(c.label) }}
+          title={`Xem ảnh ${c.label} fullscreen`}
+        >
+          <Thumb src={snapProxy(c.id)} label={c.label} showRec={!!c.rec} />
+        </div>
+      ))}
     </div>
   )
 }
 
-/* ── Cam pane ── */
+/* ── Cam pane ─────────────────────────────────────────────────── */
 function CamPane({ camera, eventId, clipUrl, finalized }) {
   const [showVideo, setShowVideo] = useState(false)
   const [snapErr,   setSnapErr]   = useState(false)
@@ -98,7 +234,7 @@ function CamPane({ camera, eventId, clipUrl, finalized }) {
   )
 }
 
-/* ── Detail panel ── */
+/* ── Detail panel ─────────────────────────────────────────────── */
 function DetailPanel({ sessionId, sessionDir }) {
   const [clips,   setClips]   = useState(null)
   const [showAll, setShowAll] = useState(false)
@@ -134,7 +270,6 @@ function DetailPanel({ sessionId, sessionDir }) {
 
   return (
     <div className={s.detScroll}>
-      {/* Header */}
       <div className={s.detInfoRow}>
         <div className={s.detInfoMain}>
           <div className={s.detName}>{best.user_name || 'Unknown'}</div>
@@ -158,7 +293,6 @@ function DetailPanel({ sessionId, sessionDir }) {
         </div>
       </div>
 
-      {/* Cameras — ảnh qua proxy, video link thẳng Frigate (browser đã có cookie) */}
       <div className={s.camGrid}>
         <div className={s.camWrap}>
           <CamPane camera={labelA} eventId={camA?.frigate_event_id} clipUrl={camA?.clip_url} finalized={camA?.clip_finalized} />
@@ -168,7 +302,6 @@ function DetailPanel({ sessionId, sessionDir }) {
         </div>
       </div>
 
-      {/* Meta bar */}
       <div className={s.clipMeta}>
         <span className={s.cmStat}>Δ {parseFloat(best.delta_seconds||0).toFixed(1)}s</span>
         {best.frigate_score && <span className={s.cmStat}>{(best.frigate_score*100).toFixed(1)}% conf</span>}
@@ -184,7 +317,6 @@ function DetailPanel({ sessionId, sessionDir }) {
         </div>
       </div>
 
-      {/* Related */}
       {showAll && relAll.length > 0 && (
         <div className={s.relSection}>
           <div className={s.relTitle}>Tất cả clip liên quan ({relAll.length})</div>
@@ -207,8 +339,8 @@ function DetailPanel({ sessionId, sessionDir }) {
   )
 }
 
-/* ── Event row ── */
-const EventRow = memo(function EventRow({ session, selected, onClick }) {
+/* ── Event row ────────────────────────────────────────────────── */
+const EventRow = memo(function EventRow({ session, selected, onClick, onThumbClick }) {
   const isIn = session.direction === 'incoming'
   return (
     <div className={`${s.evRow} ${selected ? s.evSelected : ''} ${isIn ? s.evIn : s.evOut}`} onClick={onClick}>
@@ -220,6 +352,7 @@ const EventRow = memo(function EventRow({ session, selected, onClick }) {
         direction={session.direction}
         eventIdN1={session.event_id_n1}
         eventIdS1={session.event_id_s1}
+        onThumbClick={onThumbClick}
       />
       <div className={s.evMeta}>
         <div className={s.evRow1}>
@@ -237,11 +370,11 @@ const EventRow = memo(function EventRow({ session, selected, onClick }) {
   )
 })
 
-/* ── Filter bar — local state, chỉ notify parent khi bấm Lọc ── */
+/* ── Filter bar ───────────────────────────────────────────────── */
 function FilterBar({ onApply }) {
   const [f, setF] = useState({
     since: yesterdayStr(), until: todayStr(),
-    direction: '', user_name: '', room: '',
+    direction: '', user_name: '', rooms: [],
   })
   const set = (k, v) => setF(p => ({...p, [k]: v}))
   const dirs = [['','Tất cả'],['incoming','Vào'],['outgoing','Ra']]
@@ -269,8 +402,7 @@ function FilterBar({ onApply }) {
       <input className={s.finput} placeholder="Tên người..." value={f.user_name}
         onChange={e => set('user_name', e.target.value)} onKeyDown={e => e.key==='Enter' && onApply(f)}/>
       <span className={s.flabel}>Phòng</span>
-      <input className={s.finput} style={{width:100}} placeholder="P.602..."
-        value={f.room} onChange={e => set('room', e.target.value)} onKeyDown={e => e.key==='Enter' && onApply(f)}/>
+      <RoomPicker value={f.rooms} onChange={rooms => set('rooms', rooms)} />
       <button className={s.applyBtn} onClick={() => onApply(f)}>
         <Icon name="search" size={13}/>Lọc
       </button>
@@ -278,16 +410,42 @@ function FilterBar({ onApply }) {
   )
 }
 
-/* ── Main ── */
+/* ── Main ─────────────────────────────────────────────────────── */
 export default function GateLog() {
-  const [sessions, setSessions] = useState(null)
-  const [total,    setTotal]    = useState(0)
-  const [offset,   setOffset]   = useState(0)
-  const [selSess,  setSelSess]  = useState(null)
-  const [loading,  setLoading]  = useState(false)
+  const [sessions,  setSessions]  = useState(null)
+  const [total,     setTotal]     = useState(0)
+  const [offset,    setOffset]    = useState(0)
+  const [selSess,   setSelSess]   = useState(null)
+  const [loading,   setLoading]   = useState(false)
+  const [lb,        setLb]        = useState(null)   // { idx, camera }
+  const [feedWidth, setFeedWidth] = useState(33.3)   // 1/3 + 2/3
 
-  const filtersRef = useRef({ since: yesterdayStr(), until: todayStr(), direction:'', user_name:'', room:'' })
-  const offsetRef  = useRef(0)
+  const filtersRef    = useRef({ since: yesterdayStr(), until: todayStr(), direction:'', user_name:'', rooms:[] })
+  const offsetRef     = useRef(0)
+  const bodyRef       = useRef(null)
+  const isResizingRef = useRef(false)
+
+  useEffect(() => {
+    const onMove = e => {
+      if (!isResizingRef.current || !bodyRef.current) return
+      const rect = bodyRef.current.getBoundingClientRect()
+      const pct  = ((e.clientX - rect.left) / rect.width) * 100
+      setFeedWidth(Math.min(Math.max(pct, 22), 74))
+    }
+    const onUp = () => {
+      if (isResizingRef.current) {
+        isResizingRef.current = false
+        document.body.style.cursor    = ''
+        document.body.style.userSelect = ''
+      }
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup',   onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup',   onUp)
+    }
+  }, [])
 
   const load = useCallback(async (filters, off = 0) => {
     filtersRef.current = filters
@@ -295,11 +453,11 @@ export default function GateLog() {
     setLoading(true); setSessions(null)
     try {
       const p = { offset: off, limit: PAGE }
-      if (filters.since)     p.since     = filters.since
-      if (filters.until)     p.until     = filters.until + 'T23:59:59'
-      if (filters.direction) p.direction = filters.direction
-      if (filters.user_name) p.user_name = filters.user_name
-      if (filters.room)      p.room      = filters.room
+      if (filters.since)         p.since     = filters.since
+      if (filters.until)         p.until     = filters.until + 'T23:59:59'
+      if (filters.direction)     p.direction = filters.direction
+      if (filters.user_name)     p.user_name = filters.user_name
+      if (filters.rooms?.length) p.room      = filters.rooms.join(',')
       const { data } = await getSessions(p)
       setSessions(data.items); setTotal(data.total); setOffset(off)
     } catch { setSessions([]) }
@@ -315,18 +473,19 @@ export default function GateLog() {
   return (
     <div className={s.page}>
       <FilterBar onApply={handleApply} />
-      <div className={s.body}>
+      <div className={s.body} ref={bodyRef} style={{'--feed-w': `${feedWidth}%`}}>
         <div className={s.feedCol}>
           <ColHead title="Dòng sự kiện" right={`${total} bản ghi`} />
           <div className={s.feed}>
             {loading && <div className={s.loadRow}><Spinner size={18}/><span>Đang tải...</span></div>}
             {!loading && sessions?.length === 0 && <Empty message="Không có dữ liệu"/>}
-            {sessions?.map(sess => (
+            {sessions?.map((sess, idx) => (
               <EventRow
                 key={`${sess.session_id}-${sess.event_time_local}`}
                 session={sess}
                 selected={selSess?.id === sess.session_id}
                 onClick={() => setSelSess({ id: sess.session_id, direction: sess.direction })}
+                onThumbClick={camera => setLb({ idx, camera })}
               />
             ))}
           </div>
@@ -341,11 +500,31 @@ export default function GateLog() {
           </div>
         </div>
 
+        <div
+          className={s.resizer}
+          onMouseDown={e => {
+            isResizingRef.current       = true
+            document.body.style.cursor    = 'col-resize'
+            document.body.style.userSelect = 'none'
+            e.preventDefault()
+          }}
+        />
+
         <div className={s.detCol}>
           <ColHead title="Chi tiết sự kiện" right={selSess ? `Session #${selSess.id}` : 'Chọn sự kiện bên trái'} />
           <DetailPanel sessionId={selSess?.id} sessionDir={selSess?.direction} />
         </div>
       </div>
+
+      {lb != null && sessions && (
+        <Lightbox
+          sessions={sessions}
+          idx={lb.idx}
+          camera={lb.camera}
+          onClose={() => setLb(null)}
+          onNav={newIdx => setLb(prev => ({...prev, idx: newIdx}))}
+        />
+      )}
     </div>
   )
 }

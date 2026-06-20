@@ -1,0 +1,49 @@
+name: Deploy to VPS
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.ref_name }} to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            set -e
+
+            cd ${{ secrets.VPS_DEPLOY_PATH }}
+
+            echo "▶ Fetching tag ${{ github.ref_name }} ..."
+            git fetch --tags
+            git checkout ${{ github.ref_name }}
+
+            echo "▶ Building & restarting services ..."
+            docker compose pull --ignore-buildable
+            docker compose up -d --build --remove-orphans
+
+            echo "▶ Waiting for health check ..."
+            sleep 10
+            docker compose ps
+
+            echo "✅ Deploy ${{ github.ref_name }} thành công!"
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "::notice title=Deploy OK::${{ github.ref_name }} đã được deploy lên VPS thành công."
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "::error title=Deploy Failed::Deploy ${{ github.ref_name }} thất bại. Kiểm tra logs bên trên."

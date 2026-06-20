@@ -34,7 +34,9 @@ def list_sessions(
     if user_name:
         filters.append("user_name ILIKE %(user_name)s"); params["user_name"] = f"%{user_name}%"
     if room:
-        filters.append("label ILIKE %(room)s"); params["room"] = f"%{room}%"
+        room_list = [r.strip() for r in room.split(',') if r.strip()]
+        filters.append("label = ANY(%(rooms)s)")
+        params["rooms"] = room_list
 
     where = " AND ".join(filters)
     params.update({"limit": limit, "offset": offset})

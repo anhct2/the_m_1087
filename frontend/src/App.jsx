@@ -4,6 +4,8 @@ import AppShell from './components/AppShell'
 import Login     from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import GateLog   from './pages/GateLog'
+import Rooms     from './pages/Rooms'
+import RoomLog   from './pages/RoomLog'
 import './styles/tokens.css'
 
 function RequireAuth({ children }) {
@@ -30,6 +32,8 @@ export default function App() {
             <Route index            element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="gate-log"  element={<GateLog />} />
+            <Route path="rooms"     element={<Rooms />} />
+            <Route path="room-log"  element={<RoomLog />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
