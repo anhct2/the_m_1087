@@ -22,26 +22,47 @@ jobs:
           script: |
             set -e
 
-            cd ${{ secrets.VPS_DEPLOY_PATH }}
+            TAG="${{ github.ref_name }}"
+            DEPLOY_PATH="${{ secrets.VPS_DEPLOY_PATH }}"
 
-            echo "▶ Fetching tag ${{ github.ref_name }} ..."
-            git fetch --tags
-            git checkout ${{ github.ref_name }}
+            echo "════════════════════════════════════════"
+            echo "  Deploy: $TAG"
+            echo "  Path  : $DEPLOY_PATH"
+            echo "  Time  : $(date '+%Y-%m-%d %H:%M:%S %Z')"
+            echo "════════════════════════════════════════"
 
-            echo "▶ Building & restarting services ..."
+            cd "$DEPLOY_PATH"
+
+            echo ""
+            echo "▶ [1/4] Fetch & checkout $TAG ..."
+            git fetch --tags --force
+            git checkout "$TAG"
+            echo "  Commit: $(git log -1 --format='%h %s (%an, %ar)')"
+
+            echo ""
+            echo "▶ [2/4] Pull images & build ..."
             docker compose pull --ignore-buildable
             docker compose up -d --build --remove-orphans
+            echo "  Build done."
 
-            echo "▶ Waiting for health check ..."
-            sleep 10
-            docker compose ps
+            echo ""
+            echo "▶ [3/4] Health check (15s) ..."
+            sleep 15
+            docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 
-            echo "✅ Deploy ${{ github.ref_name }} thành công!"
+            echo ""
+            echo "▶ [4/4] Recent logs (tail 30) ..."
+            docker compose logs --tail=30 --no-log-prefix 2>&1 | sed 's/^/  /'
+
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "  ✅ Deploy $TAG thành công!"
+            echo "════════════════════════════════════════"
 
       - name: Notify success
         if: success()
         run: |
-          echo "::notice title=Deploy OK::${{ github.ref_name }} đã được deploy lên VPS thành công."
+          echo "::notice title=Deploy OK::${{ github.ref_name }} đã deploy lên VPS thành công."
 
       - name: Notify failure
         if: failure()
