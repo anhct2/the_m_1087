@@ -46,7 +46,9 @@ function Lightbox({ sessions, idx, camera, onClose, onNav }) {
   const key = `${idx}-${camera}`
   if (prevKey.current !== key) { prevKey.current = key; if (imgErr) setImgErr(false) }
 
-  const eventId = camera === 'N1' ? sess.event_id_n1 : sess.event_id_s1
+  const eventId = camera === 'N1' ? sess.event_id_n1
+                : camera === 'S2' ? sess.event_id_s2
+                : sess.event_id_s1
   const src     = snapProxy(eventId)
   const isIn    = sess.direction === 'incoming'
 
@@ -179,11 +181,11 @@ const Thumb = memo(function Thumb({ src, label, showRec }) {
   )
 })
 
-function DualThumb({ direction, eventIdN1, eventIdS1, onThumbClick }) {
+function TriThumb({ direction, eventIdN1, eventIdS1, eventIdS2, onThumbClick }) {
   const isIn = direction === 'incoming'
   const cams = isIn
-    ? [{ label:'N1', id:eventIdN1 }, { label:'S1', id:eventIdS1, rec:true }]
-    : [{ label:'S1', id:eventIdS1 }, { label:'N1', id:eventIdN1, rec:true }]
+    ? [{ label:'N1', id:eventIdN1 }, { label:'S1', id:eventIdS1 }, { label:'S2', id:eventIdS2, rec:true }]
+    : [{ label:'S2', id:eventIdS2, rec:true }, { label:'S1', id:eventIdS1 }, { label:'N1', id:eventIdN1 }]
   return (
     <div className={s.dualThumb}>
       {cams.map(c => (
@@ -260,13 +262,14 @@ function DetailPanel({ sessionId, sessionDir }) {
   if (loading) return <div className={s.detCenter}><Spinner size={22} /></div>
   if (!clips?.length) return <div className={s.detEmpty}><p>Không có clip nào</p></div>
 
-  const best   = clips.find(c => c.is_best_match) || clips[0]
-  const relAll = clips.filter(c => !c.is_best_match)
-  const isIn   = (sessionDir || best.direction) === 'incoming'
-  const labelA = isIn ? 'N1' : 'S1'
-  const labelB = isIn ? 'S1' : 'N1'
-  const camA   = clips.find(c => c.camera === labelA && c.is_best_match) || clips.find(c => c.camera === labelA)
-  const camB   = clips.find(c => c.camera === labelB && c.is_best_match) || clips.find(c => c.camera === labelB)
+  const best     = clips.find(c => c.is_best_match) || clips[0]
+  const isIn     = (sessionDir || best.direction) === 'incoming'
+  const camOrder = isIn ? ['N1', 'S1', 'S2'] : ['S2', 'S1', 'N1']
+  const camClips = camOrder.map(lbl => ({
+    label: lbl,
+    clip:  clips.find(c => c.camera === lbl && c.is_best_match) || clips.find(c => c.camera === lbl) || null,
+  }))
+  const relAll   = clips.filter(c => !c.is_best_match)
 
   return (
     <div className={s.detScroll}>
@@ -294,12 +297,30 @@ function DetailPanel({ sessionId, sessionDir }) {
       </div>
 
       <div className={s.camGrid}>
-        <div className={s.camWrap}>
-          <CamPane camera={labelA} eventId={camA?.frigate_event_id} clipUrl={camA?.clip_url} finalized={camA?.clip_finalized} />
-        </div>
-        <div className={s.camWrap}>
-          <CamPane camera={labelB} eventId={camB?.frigate_event_id} clipUrl={camB?.clip_url} finalized={camB?.clip_finalized} />
-        </div>
+        {camClips.map(({ label, clip }) => (
+          <div key={label} className={s.camWrap}>
+            <CamPane
+              camera={label}
+              eventId={clip?.frigate_event_id}
+              clipUrl={clip?.clip_url}
+              finalized={clip?.clip_finalized}
+            />
+            {(clip?.snapshot_url || (clip?.clip_finalized && clip?.clip_url)) && (
+              <div className={s.camFooter}>
+                {clip?.snapshot_url && (
+                  <a className={s.camActBtn} href={clip.snapshot_url} target="_blank" rel="noreferrer">
+                    <Icon name="expand" size={9}/>Ảnh gốc
+                  </a>
+                )}
+                {clip?.clip_finalized && clip?.clip_url && (
+                  <a className={s.camActBtn} href={clip.clip_url} target="_blank" rel="noreferrer" download>
+                    <Icon name="film" size={9}/>Tải clip
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
 
       <div className={s.clipMeta}>
@@ -307,8 +328,6 @@ function DetailPanel({ sessionId, sessionDir }) {
         {best.frigate_score && <span className={s.cmStat}>{(best.frigate_score*100).toFixed(1)}% conf</span>}
         <span className={s.cmStat} style={{color:'var(--in)'}}>score {parseFloat(best.match_score||0).toFixed(3)}</span>
         <div className={s.cmActions}>
-          {best.snapshot_url && <a className={s.cmBtn} href={best.snapshot_url} target="_blank" rel="noreferrer"><Icon name="expand" size={11}/>Ảnh gốc</a>}
-          {best.clip_url     && <a className={s.cmBtn} href={best.clip_url} target="_blank" rel="noreferrer" download><Icon name="film" size={11}/>Tải clip</a>}
           {relAll.length > 0 && (
             <button className={`${s.cmBtn} ${s.cmBtnGhost}`} onClick={() => setShowAll(v => !v)}>
               <Icon name="expand" size={11}/>{showAll ? 'Ẩn bớt' : `${relAll.length} clip liên quan`}
@@ -348,10 +367,11 @@ const EventRow = memo(function EventRow({ session, selected, onClick, onThumbCli
         <div className={s.evTimeMain}>{fmt.time(session.event_time_local)}</div>
         <div className={s.evTimeAgo}>{fmt.ago(session.event_time_local)}</div>
       </div>
-      <DualThumb
+      <TriThumb
         direction={session.direction}
         eventIdN1={session.event_id_n1}
         eventIdS1={session.event_id_s1}
+        eventIdS2={session.event_id_s2}
         onThumbClick={onThumbClick}
       />
       <div className={s.evMeta}>

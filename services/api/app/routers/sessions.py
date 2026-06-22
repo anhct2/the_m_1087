@@ -69,7 +69,10 @@ def list_sessions(
                        AND x.camera = 'N1' ORDER BY x.match_score ASC LIMIT 1) AS event_id_n1,
                     (SELECT frigate_event_id FROM gate_session_clips x
                      WHERE x.event_time_vn = b.event_time_vn AND x.direction = b.direction
-                       AND x.camera = 'S1' ORDER BY x.match_score ASC LIMIT 1) AS event_id_s1
+                       AND x.camera = 'S1' ORDER BY x.match_score ASC LIMIT 1) AS event_id_s1,
+                    (SELECT frigate_event_id FROM gate_session_clips x
+                     WHERE x.event_time_vn = b.event_time_vn AND x.direction = b.direction
+                       AND x.camera = 'S2' ORDER BY x.match_score ASC LIMIT 1) AS event_id_s2
                 FROM best b
                 ORDER BY b.event_time_vn DESC
             """, params)

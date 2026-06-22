@@ -178,11 +178,25 @@
 
 /* ── Camera grid ── */
 .camGrid {
-  display:grid; grid-template-columns:1fr 1fr;
+  display:grid; grid-template-columns:repeat(3, 1fr);
   gap:2px; background:var(--ln);
   flex-shrink:0;
 }
-.camWrap { background:var(--bg0); }
+.camWrap { background:var(--bg0); display:flex; flex-direction:column; }
+
+/* Per-camera action bar */
+.camFooter {
+  display:flex; gap:4px; padding:5px 8px;
+  background:var(--bg1); border-top:1px solid var(--ln);
+  flex-shrink:0; flex-wrap:wrap;
+}
+.camActBtn {
+  display:inline-flex; align-items:center; gap:3px;
+  color:var(--in); text-decoration:none; font-size:10px; font-family:var(--sans);
+  padding:2px 7px; border:1px solid var(--in3); border-radius:3px;
+  background:transparent; cursor:pointer; transition:all .12s; white-space:nowrap;
+}
+.camActBtn:hover { background:var(--inb); }
 
 .camPane { position:relative; aspect-ratio:16/9; background:var(--bg0); overflow:hidden; }
 .camVideo { width:100%; height:100%; display:block; background:#000; }

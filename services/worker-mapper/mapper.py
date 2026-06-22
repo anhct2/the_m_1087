@@ -19,7 +19,7 @@ from frigate_client import FrigateClient
 log   = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
 
-CAMERAS      = {"incoming": ["N1", "S1"], "outgoing": ["S1", "N1"]}
+CAMERAS      = {"incoming": ["N1", "S1", "S2"], "outgoing": ["S2", "S1", "N1"]}
 SCORE_W_TIME = 0.1
 SCORE_W_CONF = 10.0
 
