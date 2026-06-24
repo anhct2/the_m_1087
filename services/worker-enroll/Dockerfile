@@ -9,9 +9,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 python3.12-dev python3-pip \
+    python3 python3-dev python3-pip \
     libgl1 libglib2.0-0 libsm6 libxext6 ffmpeg \
-    && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -32,7 +31,7 @@ RUN pip install -U pip && \
 COPY src/ /app/
 
 # cuDNN 9 path (nvidia-cudnn-cu12)
-ENV LD_LIBRARY_PATH="/usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/lib/python3/dist-packages/nvidia/cudnn/lib:/usr/local/lib/python3.10/dist-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}"
 ENV INSIGHTFACE_HOME=/app/models
 
 RUN mkdir -p /app/models /app/logs
