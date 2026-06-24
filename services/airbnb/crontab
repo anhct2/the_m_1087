@@ -1,0 +1,1 @@
+0 18 * * * cd /app && python -m jobs.run_daily_scrape

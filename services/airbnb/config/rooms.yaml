@@ -1,0 +1,20 @@
+# ============================================================
+# 87TCS — Airbnb Calendar Config
+# Rooms + URLs đã seed vào DB, không cần khai báo ở đây nữa
+# ============================================================
+
+database:
+  host: "localhost"
+  port: 5555
+  name: "m1087"
+  user: "postgres"
+  # password đặt trong env: PGPASSWORD hoặc .env
+
+scraper:
+  headless: true
+  timeout_ms: 40000
+  wait_after_load_ms: 5000
+  days_ahead: 90
+
+cron:
+  schedule: "0 18 * * *"

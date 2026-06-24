@@ -59,6 +59,18 @@ services:
       MAPPER_DEVICE_NAME:    ${MAPPER_DEVICE_NAME:-frigate-87tcs}
     networks: [tcs]
 
+  # ── Airbnb Calendar Scraper — chạy 18:00 hàng ngày ───────
+  airbnb-scraper:
+    build:
+      context: ./services/airbnb
+      dockerfile: Dockerfile
+    image: tcs-airbnb-scraper:latest
+    container_name: tcs-airbnb-scraper
+    restart: unless-stopped
+    environment:
+      <<: *pg-env
+    networks: [tcs]
+
   # ── Worker: Face recognition (scaffold) ────────────────────
   worker-face:
     build:
