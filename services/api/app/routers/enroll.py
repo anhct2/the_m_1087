@@ -325,3 +325,65 @@ def cancel_job(job_id: int, _=Depends(require_auth)):
             """, {"jid": job_id})
         conn.commit()
     return {"ok": True}
+
+
+# ── Re-enroll: reset job để worker f87 xử lý lại ────────────────
+@router.post("/profiles/{person_id}/re-enroll")
+def re_enroll_profile(person_id: str, _=Depends(require_auth)):
+    """
+    Tạo lại job_queue entries cho tất cả gate events
+    đã từng enroll person này. Worker trên f87 sẽ pick up và
+    chạy lại pipeline để cải thiện face/appearance data.
+    """
+    JOB_DELAY_S = 0  # re-enroll từ lịch sử → xử lý ngay
+
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT es.door_id, es.unlock_id, es.event_time_vn, es.room_label
+                FROM enroll.enroll_sessions es
+                JOIN enroll.person_session_map psm ON psm.enroll_session_id = es.id
+                WHERE psm.person_id = %(pid)s
+                ORDER BY es.event_time_vn DESC
+            """, {"pid": person_id})
+            sessions = cur.fetchall()
+
+            if not sessions:
+                raise HTTPException(404, "Không có session nào để re-enroll")
+
+            count = 0
+            last_job_id = None
+            for ses in sessions:
+                cur.execute("""
+                    INSERT INTO enroll.job_queue
+                        (door_id, unlock_id, event_time_vn, room_label,
+                         status, scheduled_at, max_attempts)
+                    VALUES (%(d)s,%(u)s,%(t)s,%(r)s,'pending',now(),3)
+                    ON CONFLICT (door_id, unlock_id) DO UPDATE
+                        SET status       = 'pending',
+                            attempt_count = 0,
+                            scheduled_at  = now(),
+                            last_error    = NULL,
+                            locked_by     = NULL,
+                            locked_at     = NULL,
+                            started_at    = NULL,
+                            finished_at   = NULL
+                    RETURNING id
+                """, {
+                    "d": ses["door_id"], "u": ses["unlock_id"],
+                    "t": ses["event_time_vn"], "r": ses["room_label"],
+                })
+                row = cur.fetchone()
+                if row:
+                    count += 1
+                    last_job_id = row["id"]
+        conn.commit()
+
+    return {
+        "ok":       True,
+        "enqueued": count,
+        "job_id":   last_job_id,
+        "delay_s":  JOB_DELAY_S,
+        "note":     f"Worker f87 sẽ xử lý {count} job(s) trong vài phút tới",
+    }

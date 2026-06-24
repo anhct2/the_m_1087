@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   getEnrollSummary, getEnrollQueue, getEnrollSessions,
   getEnrollSession, getEnrollProfiles, patchEnrollProfile,
@@ -245,6 +246,7 @@ function SessionDetail({ d, onClose }) {
 
 // ── Profiles Tab ─────────────────────────────────────────────
 function ProfilesTab() {
+  const navigate = useNavigate()
   const [rows,    setRows]    = useState([])
   const [loading, setLoading] = useState(true)
   const [roomF,   setRoomF]   = useState('')
@@ -314,6 +316,10 @@ function ProfilesTab() {
                       </span>
                       <button className={s.btnIcon}
                         onClick={() => { setEditing(p.id); setEditVal(p.display_name || '') }}>
+                        <Icon name="edit" size={11} />
+                      </button>
+                      <button className={s.btnIcon}
+                        onClick={() => navigate(`/enroll/profiles/${p.id}`)}>
                         <Icon name="eye" size={11} />
                       </button>
                     </div>

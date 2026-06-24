@@ -274,3 +274,16 @@ SELECT
 FROM enroll.job_queue
 WHERE created_at >= now() - interval '7 days'
 GROUP BY status;
+
+-- ============================================================
+-- 9. GRANT quyền cho app user (m1087)
+-- ============================================================
+GRANT USAGE   ON SCHEMA enroll TO m1087;
+GRANT ALL     ON ALL TABLES    IN SCHEMA enroll TO m1087;
+GRANT ALL     ON ALL SEQUENCES IN SCHEMA enroll TO m1087;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA enroll TO m1087;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA enroll
+    GRANT ALL ON TABLES    TO m1087;
+ALTER DEFAULT PRIVILEGES IN SCHEMA enroll
+    GRANT ALL ON SEQUENCES TO m1087;
