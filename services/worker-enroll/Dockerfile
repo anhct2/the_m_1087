@@ -18,16 +18,15 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-# Thứ tự cài quan trọng (từ kinh nghiệm thực tế)
+# Thứ tự cài quan trọng: requirements (pin numpy<2) trước, GPU packages sau
 RUN pip install -U pip && \
-    pip install "numpy<2" && \
+    pip install -r requirements.txt && \
     pip install nvidia-cudnn-cu12==9.1.0.70 && \
     pip install onnxruntime-gpu==1.18.1 \
         --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/ && \
     pip install insightface==0.7.3 && \
     pip install onnxruntime-gpu==1.18.1 --force-reinstall \
-        --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/ && \
-    pip install -r requirements.txt
+        --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 
 COPY src/ /app/
 
