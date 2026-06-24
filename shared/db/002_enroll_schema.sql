@@ -218,7 +218,28 @@ $$;
 -- ============================================================
 -- 8. VIEWS cho API backend (VPS)
 -- ============================================================
-CREATE OR REPLACE VIEW enroll.v_sessions AS
+
+-- Drop trước để tránh "cannot drop columns from view"
+DROP VIEW IF EXISTS enroll.v_sessions    CASCADE;
+DROP VIEW IF EXISTS enroll.v_occupancy   CASCADE;
+DROP VIEW IF EXISTS enroll.v_queue_stats CASCADE;
+DROP VIEW IF EXISTS gate_sessions         CASCADE;
+
+-- gate_sessions: view dedup từ gate_session_clips
+-- door_id/unlock_id cast sang TEXT để khớp enroll tables
+CREATE VIEW gate_sessions AS
+SELECT DISTINCT ON (session_id, unlock_id)
+    session_id::text  AS door_id,
+    unlock_id::text   AS unlock_id,
+    event_time_vn,
+    label,
+    method,
+    direction,
+    user_name
+FROM gate_session_clips
+ORDER BY session_id, unlock_id, event_time_vn DESC;
+
+CREATE VIEW enroll.v_sessions AS
 SELECT
     es.id, es.job_id, es.room_label, es.event_time_vn,
     es.status, es.person_count, es.persons_enrolled,
@@ -230,7 +251,7 @@ FROM enroll.enroll_sessions es
 LEFT JOIN gate_sessions gs
     ON gs.door_id = es.door_id AND gs.unlock_id = es.unlock_id;
 
-CREATE OR REPLACE VIEW enroll.v_occupancy AS
+CREATE VIEW enroll.v_occupancy AS
 SELECT
     rs.room_id, rs.person_id,
     pp.display_name, pp.known_room,
@@ -243,7 +264,7 @@ JOIN enroll.person_profiles pp ON pp.id = rs.person_id
 WHERE rs.exit_ts IS NULL
 ORDER BY rs.entry_ts DESC;
 
-CREATE OR REPLACE VIEW enroll.v_queue_stats AS
+CREATE VIEW enroll.v_queue_stats AS
 SELECT
     status,
     COUNT(*)::INT                                AS cnt,
