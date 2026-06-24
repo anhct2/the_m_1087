@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ============================================================
 #  87 TCS — Smart Building Monitor
 #  Tất cả services chạy trên VPS HK
@@ -69,6 +67,7 @@ services:
     restart: unless-stopped
     environment:
       <<: *pg-env
+      TZ: Asia/Ho_Chi_Minh
     networks: [tcs]
 
   # ── Worker: Face recognition (scaffold) ────────────────────
