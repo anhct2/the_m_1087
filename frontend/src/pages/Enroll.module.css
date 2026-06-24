@@ -1,0 +1,263 @@
+/* Enroll.module.css */
+
+/* ── Page layout ──────────────────────────────────────────── */
+.page { padding: 1.25rem 1.5rem; }
+
+.pageHeader {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 1rem; flex-wrap: wrap;
+}
+.pageTitle  { margin: 0; font-size: 1.25rem; font-weight: 500; }
+.pageSub    { font-size: 0.8rem; color: var(--c-text-2); flex: 1; }
+.pageActions{ display: flex; gap: 8px; margin-left: auto; }
+
+/* ── Metric cards ─────────────────────────────────────────── */
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px; margin-bottom: 1.25rem;
+}
+.metricCard {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 8px; padding: 10px 12px;
+}
+.metricLabel { font-size: 0.7rem; color: var(--c-text-2); margin-bottom: 3px; }
+.metricVal   { font-size: 1.2rem; font-weight: 500; }
+.metricGreen { color: oklch(0.5 0.15 152); }
+.metricAmber { color: oklch(0.55 0.18 60); }
+
+/* ── Tabs ─────────────────────────────────────────────────── */
+.tabs {
+  display: flex; gap: 0;
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: 1rem;
+}
+.tabBtn {
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 16px; font-size: 0.82rem; cursor: pointer;
+  color: var(--c-text-2); font-weight: 400; transition: color 0.15s;
+}
+.tabBtnActive {
+  color: var(--c-text); border-bottom-color: var(--c-text); font-weight: 500;
+}
+
+/* ── Filter row ──────────────────────────────────────────── */
+.filterRow {
+  display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;
+}
+.filterInput {
+  padding: 6px 10px; border: 1px solid var(--c-border);
+  border-radius: 6px; font-size: 0.82rem;
+  background: var(--c-surface); color: var(--c-text);
+}
+.filterSelect {
+  padding: 6px 8px; border: 1px solid var(--c-border);
+  border-radius: 6px; font-size: 0.82rem;
+  background: var(--c-surface); color: var(--c-text); cursor: pointer;
+}
+
+/* ── Table ───────────────────────────────────────────────── */
+.tableWrap {
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 10px; overflow: hidden; margin-bottom: 12px;
+}
+.table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.table thead tr { border-bottom: 1px solid var(--c-border); }
+.table th {
+  padding: 9px 12px; text-align: left; font-weight: 500;
+  color: var(--c-text-2); font-size: 0.75rem; white-space: nowrap;
+}
+.tableRow {
+  border-bottom: 1px solid var(--c-border);
+  cursor: pointer; transition: background 0.1s;
+}
+.tableRow:last-child { border-bottom: none; }
+.tableRow:hover      { background: var(--c-hover, rgba(0,0,0,.03)); }
+.tableRowActive      { background: var(--c-hover, rgba(0,0,0,.04)); }
+.table td { padding: 9px 12px; vertical-align: middle; }
+.tdCenter { text-align: center; }
+.tdMuted  { color: var(--c-text-2); font-size: 0.78rem; }
+.tdWide   { min-width: 100px; }
+
+/* ── Score bar ───────────────────────────────────────────── */
+.barWrap  { display: flex; align-items: center; gap: 6px; }
+.barTrack { flex: 1; height: 4px; background: var(--c-border); border-radius: 2px; min-width: 50px; }
+.barFill  { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.barGreen { background: oklch(0.6 0.15 152); }
+.barAmber { background: oklch(0.65 0.18 60); }
+.barRed   { background: oklch(0.6 0.2 25); }
+.barVal   { font-size: 0.75rem; color: var(--c-text-2); min-width: 28px; text-align: right; }
+
+/* ── Tags ────────────────────────────────────────────────── */
+.tag {
+  display: inline-block; font-size: 0.7rem; padding: 2px 7px;
+  border-radius: 4px; font-weight: 500; white-space: nowrap;
+}
+.tagGreen { background: oklch(0.93 0.06 152); color: oklch(0.38 0.12 152); }
+.tagAmber { background: oklch(0.95 0.08 60);  color: oklch(0.45 0.18 60); }
+.tagRed   { background: oklch(0.94 0.06 25);  color: oklch(0.42 0.2 25); }
+.tagBlue  { background: oklch(0.93 0.05 240); color: oklch(0.38 0.15 240); }
+.tagTeal  { background: oklch(0.93 0.06 185); color: oklch(0.38 0.12 185); }
+.tagGray  { background: var(--c-surface-2, rgba(0,0,0,.06)); color: var(--c-text-2); }
+
+/* ── Buttons ─────────────────────────────────────────────── */
+.btnSecondary {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 12px; border: 1px solid var(--c-border);
+  border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+  background: var(--c-surface); color: var(--c-text);
+  transition: background 0.15s;
+}
+.btnSecondary:hover { background: var(--c-hover, rgba(0,0,0,.04)); }
+.btnPrimary {
+  padding: 6px 14px; border: none; border-radius: 6px;
+  font-size: 0.8rem; cursor: pointer; font-weight: 500;
+  background: oklch(0.35 0.12 240); color: #fff; transition: opacity 0.15s;
+}
+.btnPrimary:hover   { opacity: 0.88; }
+.btnPrimary:disabled{ opacity: 0.5; cursor: not-allowed; }
+.btnIcon {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 4px; border: none; background: none; cursor: pointer;
+  color: var(--c-text-2); border-radius: 4px; transition: background 0.12s;
+}
+.btnIcon:hover { background: var(--c-hover, rgba(0,0,0,.06)); color: var(--c-text); }
+
+/* ── Detail panel ────────────────────────────────────────── */
+.detailPanel {
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 10px; padding: 1rem 1.25rem; margin-top: 4px;
+}
+.detailHeader {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; flex-wrap: wrap;
+}
+.detailTitle { font-size: 0.95rem; font-weight: 500; }
+.detailMeta  { font-size: 0.78rem; color: var(--c-text-2); }
+.detailMeta2 {
+  display: flex; gap: 16px; font-size: 0.78rem;
+  color: var(--c-text-2); margin-bottom: 12px; flex-wrap: wrap;
+}
+.detailLoading { padding: 20px; display: flex; justify-content: center; }
+
+.section { margin-top: 12px; }
+.sectionLabel {
+  font-size: 0.7rem; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--c-text-2); margin-bottom: 8px;
+}
+
+/* ── Camera cards ────────────────────────────────────────── */
+.camGrid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.camCard {
+  border: 1px solid var(--c-border); border-radius: 8px; padding: 10px 12px;
+}
+.camCardActive { border-color: oklch(0.6 0.12 152); }
+.camCardHeader {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px; flex-wrap: wrap;
+}
+.camSrc { font-size: 0.75rem; color: var(--c-text-2); margin-left: auto; }
+.camMeta {
+  display: flex; gap: 8px; margin-top: 5px;
+  font-size: 0.75rem; color: var(--c-text-2); flex-wrap: wrap;
+}
+
+/* ── Profile grid ────────────────────────────────────────── */
+.profileGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.profileCard {
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 10px; padding: 1rem;
+}
+.profileHead {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;
+}
+.avatar {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  background: oklch(0.92 0.05 240); color: oklch(0.38 0.15 240);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.9rem; font-weight: 500;
+}
+.avatarSm {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  background: oklch(0.92 0.05 240); color: oklch(0.38 0.15 240);
+  display: flex; align-items: center; justify-content: center; font-size: 0.78rem;
+}
+.profileInfo  { flex: 1; min-width: 0; }
+.profileNameRow { display: flex; align-items: center; gap: 5px; }
+.profileName {
+  font-size: 0.85rem; font-weight: 500; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.profileSub   { font-size: 0.75rem; color: var(--c-text-2); }
+.profileScoreRow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.scoreLbl     { font-size: 0.72rem; color: var(--c-text-2); width: 28px; }
+.profileTags  { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.profileNotes { font-size: 0.75rem; color: var(--c-text-2); font-style: italic; }
+.profileLast  { font-size: 0.72rem; color: var(--c-text-3, rgba(0,0,0,.4)); margin-top: 6px; }
+.editRow      { display: flex; gap: 4px; align-items: center; }
+.editInput    { flex: 1; font-size: 0.8rem; padding: 2px 6px; border: 1px solid var(--c-border); border-radius: 4px; }
+
+/* ── Person mini ─────────────────────────────────────────── */
+.personGrid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px;
+}
+.personMini {
+  border: 1px solid var(--c-border); border-radius: 8px; padding: 10px 12px;
+}
+.personMiniHead {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.personMiniName { font-size: 0.82rem; font-weight: 500; }
+.personMiniSub  { font-size: 0.72rem; color: var(--c-text-2); }
+
+/* ── Room grid (occupancy) ───────────────────────────────── */
+.roomGrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px;
+}
+.roomCard {
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.roomCardOccupied { border-color: oklch(0.65 0.12 152); }
+.roomHeader { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.roomName   { font-size: 0.9rem; }
+.occupant   { font-size: 0.8rem; }
+.occupantBorder { padding-top: 6px; margin-top: 6px; border-top: 1px solid var(--c-border); }
+.occupantName   { font-weight: 500; }
+.occupantMeta   { font-weight: 400; color: var(--c-text-2); }
+.occupantTime   { font-size: 0.72rem; color: var(--c-text-2); margin-top: 2px; }
+.occupancyMeta  { font-size: 0.8rem; color: var(--c-text-2); flex: 1; }
+
+/* ── Modal ───────────────────────────────────────────────── */
+.modalOverlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center; z-index: 200;
+}
+.modal {
+  background: var(--c-bg, #fff); border: 1px solid var(--c-border);
+  border-radius: 12px; padding: 1.5rem; min-width: 300px; max-width: 420px; width: 90%;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.modalTitle   { font-size: 1rem; font-weight: 500; margin-bottom: 4px; }
+.modalLabel   { font-size: 0.78rem; color: var(--c-text-2); }
+.modalActions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.resultBox {
+  background: oklch(0.93 0.06 152); color: oklch(0.38 0.12 152);
+  border-radius: 6px; padding: 8px 12px; font-size: 0.82rem;
+}
+.errorBox {
+  background: oklch(0.94 0.06 25); color: oklch(0.42 0.2 25);
+  border-radius: 6px; padding: 8px 12px; font-size: 0.82rem; margin-top: 8px;
+}
+
+/* ── Utils ───────────────────────────────────────────────── */
+.center  { display: flex; justify-content: center; padding: 2rem; }
+.tdCenter{ text-align: center; }

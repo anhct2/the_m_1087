@@ -1,0 +1,51 @@
+# docker-compose.f87.yml
+# ============================================================
+# Chạy trên f87 (192.168.1.200) — GPU machine
+# KHÔNG được commit vào CI/CD deploy lên VPS
+#
+# Lệnh deploy lên f87:
+#   scp docker-compose.f87.yml user@192.168.1.200:~/87tcs/
+#   scp .env.f87 user@192.168.1.200:~/87tcs/
+#   ssh user@192.168.1.200
+#   cd ~/87tcs && docker compose -f docker-compose.f87.yml up -d --build
+# ============================================================
+
+version: "3.9"
+
+services:
+  worker-enroll:
+    build:
+      context: services/worker-enroll
+      dockerfile: Dockerfile
+    image: tcs-worker-enroll:latest
+    container_name: tcs-worker-enroll
+    restart: unless-stopped
+    # host network: cần access Frigate :5000 local và DB VPS
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    env_file: .env.f87
+    volumes:
+      - enroll_models:/app/models
+      - ./logs/worker-enroll:/app/logs
+    mem_limit: 4g
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import psycopg2; print('ok')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  enroll_models:
+    name: tcs_enroll_models

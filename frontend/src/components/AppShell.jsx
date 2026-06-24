@@ -9,6 +9,7 @@ const NAV = [
   { to: '/gate-log',  icon: 'gate',      label: 'Gate Log' },
   { to: '/rooms',     icon: 'building',  label: 'Phòng' },
   { to: '/room-log',  icon: 'calendar',  label: 'Lịch phòng' },
+  { to: '/enroll',    icon: 'users',     label: 'Enroll' },
 ]
 
 const Clock = memo(function Clock() {
