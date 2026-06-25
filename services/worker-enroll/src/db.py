@@ -65,8 +65,8 @@ def get_gate_clips(door_id: str, unlock_id: str) -> List[dict]:
                 JOIN gate_sessions gs
                     ON  gs.event_time_vn = gsc.event_time_vn
                     AND gs.direction     = gsc.direction
-                WHERE gs.door_id   = %(did)s
-                  AND gs.unlock_id = %(uid)s
+                WHERE gs.door_id::text   = %(did)s
+                  AND gs.unlock_id::text = %(uid)s
                   AND gsc.direction = 'incoming'
                 ORDER BY
                     CASE gsc.camera
@@ -194,7 +194,7 @@ def create_session(job_id: int, door_id: str, unlock_id: str,
                 RETURNING id
             """, {"sid": sid, "jid": job_id, "d": door_id,
                   "u": unlock_id, "t": event_time_vn, "r": room_label})
-            actual_sid = cur.fetchone()[0]
+            actual_sid = cur.fetchone()["id"]
             # Clean up previous attempt's results so retry starts fresh
             cur.execute(
                 "DELETE FROM enroll.camera_clip_results WHERE enroll_session_id = %s",
