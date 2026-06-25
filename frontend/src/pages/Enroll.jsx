@@ -475,15 +475,19 @@ function SessionDetail({ d, onClose, onRetry, onAssign }) {
 }
 
 // ── Sessions Tab ──────────────────────────────────────────────────
+const STUCK_SESSION_MS = 5 * 60 * 1000
+
 function SessionsTab() {
-  const [rows,    setRows]    = useState([])
-  const [loading, setLoading] = useState(true)
-  const [roomF,   setRoomF]   = useState('')
-  const [statusF, setStatusF] = useState('')
-  const [selected, setSel]    = useState(null)
-  const [detail,  setDetail]  = useState(null)
-  const [detailL, setDL]      = useState(false)
-  const [assignSes, setAssign] = useState(null)
+  const [rows,      setRows]   = useState([])
+  const [loading,   setLoading] = useState(true)
+  const [roomF,     setRoomF]   = useState('')
+  const [statusF,   setStatusF] = useState('')
+  const [selected,  setSel]     = useState(null)
+  const [detail,    setDetail]  = useState(null)
+  const [detailL,   setDL]      = useState(false)
+  const [assignSes, setAssign]  = useState(null)
+  const [resetting,   setReset]       = useState(false)
+  const [retryingAll, setRetryingAll] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -527,6 +531,31 @@ function SessionsTab() {
     load()
   }
 
+  const handleReleaseStuck = async () => {
+    setReset(true)
+    try {
+      const { data } = await postReleaseStuck()
+      load()
+      alert(`Đã reset: ${data.jobs_reset} job${data.jobs_reset !== 1 ? 's' : ''}, ${data.sessions_reset} session${data.sessions_reset !== 1 ? 's' : ''}`)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Lỗi khi reset')
+    } finally { setReset(false) }
+  }
+
+  const stuckSessions = rows.filter(r =>
+    r.status === 'processing' && r.created_at &&
+    (Date.now() - new Date(r.created_at).getTime()) > STUCK_SESSION_MS
+  )
+  const processingRows = rows.filter(r => r.status === 'processing')
+
+  const handleRetryAll = async () => {
+    setRetryingAll(true)
+    try {
+      await Promise.all(processingRows.map(r => retrySession(r.id).catch(() => {})))
+      load()
+    } finally { setRetryingAll(false) }
+  }
+
   return (
     <div>
       <div className={s.filterRow}>
@@ -542,6 +571,26 @@ function SessionsTab() {
         <button className={s.btnSecondary} onClick={load}>
           <Icon name="refresh" size={13} /> Làm mới
         </button>
+        {processingRows.length > 0 && (
+          <button
+            className={s.btnSecondary}
+            onClick={handleRetryAll}
+            disabled={retryingAll}
+            title="Retry tất cả sessions đang processing"
+          >
+            {retryingAll ? <Spinner size={12} /> : '↺'} Retry {processingRows.length} processing
+          </button>
+        )}
+        {stuckSessions.length > 0 && (
+          <button
+            className={`${s.btnSecondary} ${s.btnWarn}`}
+            onClick={handleReleaseStuck}
+            disabled={resetting}
+            title="Reset sessions bị kẹt ở processing (worker không chạy)"
+          >
+            {resetting ? <Spinner size={12} /> : '⚠'} Reset {stuckSessions.length} bị kẹt
+          </button>
+        )}
         <span className={s.filterMeta}>{rows.length} sessions</span>
       </div>
 
@@ -568,77 +617,91 @@ function SessionsTab() {
             {!loading && rows.length === 0 && (
               <tr><td colSpan={10} className={s.tdCenter}><Empty /></td></tr>
             )}
-            {!loading && rows.map(r => (
-              <tr key={r.id}
-                data-status={r.status}
-                className={`${s.tableRow} ${ROW_CLS[r.status] || ''} ${selected === r.id ? s.tableRowActive : ''}`}
-                onClick={() => openDetail(r.id)}>
-                <td style={{ padding: '6px 10px' }}>
-                  <CamThumb
-                    camId={r.stopped_at_cam}
-                    quality={r.overall_quality}
-                    status={r.status}
-                    eventId={r.snap_event_id}
-                    width={60}
-                    height={42}
-                  />
-                </td>
-                <td className={s.tdTime}>{fmtDt(r.event_time_vn)}</td>
-                <td><span className={`${s.badge} ${s.stTeal}`}>{r.room_label}</span></td>
-                <td><StatusBadge status={r.status} /></td>
-                <td>
-                  {r.direction && (
-                    <span className={r.direction === 'IN' ? s.dirIn : s.dirOut}>
-                      {r.direction}
-                    </span>
-                  )}
-                </td>
-                <td className={s.tdCenter}>
-                  <span className={r.persons_enrolled > 0 ? s.countGreen : s.countGray}>
-                    {r.persons_enrolled}
-                  </span>
-                  <span className={s.countSep}>/</span>
-                  {r.person_count}
-                </td>
-                <td className={s.tdWide}><ScoreBar value={r.overall_quality} /></td>
-                <td className={s.tdMuted}>{r.stopped_at_cam || '—'}</td>
-                <td className={`${s.tdMuted} ${s.tdRight}`}>{fmtMs(r.total_ms)}</td>
-                <td onClick={e => e.stopPropagation()}>
-                  <div className={s.actionCell}>
-                    {['failed','low_quality','no_detection','skipped'].includes(r.status) && (
-                      <button className={`${s.btnAction} ${s.btnRetry}`}
-                        title="Retry"
-                        onClick={async (e) => {
-                          e.stopPropagation()
-                          try {
-                            await retrySession(r.id)
-                            setRows(prev => prev.map(x => x.id === r.id ? { ...x, status: 'processing' } : x))
-                          } catch (err) { alert(err.response?.data?.detail || 'Lỗi') }
-                        }}>
-                        ↺
-                      </button>
+            {!loading && rows.map(r => {
+              const stuck = r.status === 'processing' && r.created_at &&
+                (Date.now() - new Date(r.created_at).getTime()) > STUCK_SESSION_MS
+              return (
+                <tr key={r.id}
+                  data-status={r.status}
+                  className={`${s.tableRow} ${ROW_CLS[r.status] || ''} ${stuck ? s.rowStuck : ''} ${selected === r.id ? s.tableRowActive : ''}`}
+                  onClick={() => openDetail(r.id)}>
+                  <td style={{ padding: '6px 10px' }}>
+                    <CamThumb
+                      camId={r.stopped_at_cam}
+                      quality={r.overall_quality}
+                      status={r.status}
+                      eventId={r.snap_event_id}
+                      width={60}
+                      height={42}
+                    />
+                  </td>
+                  <td className={s.tdTime}>{fmtDt(r.event_time_vn)}</td>
+                  <td><span className={`${s.badge} ${s.stTeal}`}>{r.room_label}</span></td>
+                  <td>
+                    <StatusBadge status={r.status} />
+                    {stuck && <span className={s.stuckTag}>kẹt</span>}
+                  </td>
+                  <td>
+                    {r.direction && (
+                      <span className={r.direction === 'IN' ? s.dirIn : s.dirOut}>
+                        {r.direction}
+                      </span>
                     )}
-                    <button className={`${s.btnAction} ${s.btnAssign}`}
-                      title="Gán người"
-                      onClick={(e) => { e.stopPropagation(); setAssign(r) }}>
-                      ＋
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className={s.tdCenter}>
+                    <span className={r.persons_enrolled > 0 ? s.countGreen : s.countGray}>
+                      {r.persons_enrolled}
+                    </span>
+                    <span className={s.countSep}>/</span>
+                    {r.person_count}
+                  </td>
+                  <td className={s.tdWide}><ScoreBar value={r.overall_quality} /></td>
+                  <td className={s.tdMuted}>{r.stopped_at_cam || '—'}</td>
+                  <td className={`${s.tdMuted} ${s.tdRight}`}>{fmtMs(r.total_ms)}</td>
+                  <td onClick={e => e.stopPropagation()}>
+                    <div className={s.actionCell}>
+                      {['failed','low_quality','no_detection','skipped'].includes(r.status) && (
+                        <button className={`${s.btnAction} ${s.btnRetry}`}
+                          title="Retry"
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            try {
+                              await retrySession(r.id)
+                              setRows(prev => prev.map(x => x.id === r.id ? { ...x, status: 'processing' } : x))
+                            } catch (err) { alert(err.response?.data?.detail || 'Lỗi') }
+                          }}>
+                          ↺
+                        </button>
+                      )}
+                      <button className={`${s.btnAction} ${s.btnAssign}`}
+                        title="Gán người"
+                        onClick={(e) => { e.stopPropagation(); setAssign(r) }}>
+                        ＋
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
 
-      {detailL && <div className={s.detailLoading}><Spinner /></div>}
-      {detail && !detailL && (
-        <SessionDetail
-          d={detail}
-          onClose={() => { setDetail(null); setSel(null) }}
-          onRetry={handleRetry}
-          onAssign={() => setAssign(detail)}
-        />
+      {(detail || detailL) && (
+        <>
+          <div className={s.detailDrawerBg} onClick={() => { setDetail(null); setSel(null) }} />
+          <div className={s.detailDrawer}>
+            {detailL
+              ? <div className={s.detailLoading}><Spinner /></div>
+              : <SessionDetail
+                  d={detail}
+                  onClose={() => { setDetail(null); setSel(null) }}
+                  onRetry={handleRetry}
+                  onAssign={() => setAssign(detail)}
+                />
+            }
+          </div>
+        </>
       )}
 
       {assignSes && (
