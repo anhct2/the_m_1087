@@ -101,6 +101,14 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT,  handle_signal)
 
+    # Reset jobs left in 'running' state from a previous crash before doing anything else
+    try:
+        n = release_stuck(0)
+        if n:
+            log.warning(f"Startup: reset {n} stuck jobs from previous crash")
+    except Exception as e:
+        log.error(f"Startup release_stuck error: {e}")
+
     # Pre-load GPU model — fail fast
     log.info("Loading ML model…")
     Extractor.get()
