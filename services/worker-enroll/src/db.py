@@ -40,8 +40,8 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
                   AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gs.door_id
-                        AND jq.unlock_id = gs.unlock_id
+                      WHERE jq.door_id   = gs.door_id::text
+                        AND jq.unlock_id = gs.unlock_id::text
                   )
                 ORDER BY gs.event_time_vn DESC
             """, {"m": str(since_min)})
