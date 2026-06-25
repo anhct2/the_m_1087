@@ -6,8 +6,9 @@ import Dashboard from './pages/Dashboard'
 import GateLog   from './pages/GateLog'
 import Rooms     from './pages/Rooms'
 import RoomLog   from './pages/RoomLog'
-import Enroll        from './pages/Enroll'
-import EnrollProfile from './pages/EnrollProfile'
+import Enroll          from './pages/Enroll'
+import EnrollProfile   from './pages/EnrollProfile'
+import AirbnbCalendar  from './pages/AirbnbCalendar'
 import './styles/tokens.css'
 
 function RequireAuth({ children }) {
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="room-log"  element={<RoomLog />} />
             <Route path="enroll"                element={<Enroll />} />
             <Route path="enroll/profiles/:id"  element={<EnrollProfile />} />
+            <Route path="airbnb"               element={<AirbnbCalendar />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

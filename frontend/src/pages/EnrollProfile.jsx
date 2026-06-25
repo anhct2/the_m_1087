@@ -47,9 +47,11 @@ const CONF_COLOR = {
   gate_code: '#22c55e', camera_chain: '#0d9488', appearance_only: '#f59e0b', unknown: '#475569',
 }
 
-function FaceAvatar({ gender, confidence, size = 52 }) {
-  const bc = CONF_COLOR[confidence] || '#475569'
-  const bg = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
+function FaceAvatar({ gender, confidence, eventId, size = 52 }) {
+  const [imgErr, setImgErr] = useState(false)
+  const bc  = CONF_COLOR[confidence] || '#475569'
+  const bg  = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
+  const src = eventId && !imgErr ? `/api/media/snapshot/${eventId}` : null
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', flexShrink: 0,
@@ -58,11 +60,16 @@ function FaceAvatar({ gender, confidence, size = 52 }) {
       border: `2px solid ${bc}55`,
       boxShadow: `0 0 0 2px ${bc}1a, 0 2px 8px rgba(0,0,0,.6)`,
     }}>
-      <svg style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', opacity: .35 }}
-        width={size} height={size * 1.15} viewBox="0 0 100 115">
-        <ellipse cx={50} cy={34} rx={21} ry={25} fill="#c8bdb0" />
-        <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
-      </svg>
+      {src
+        ? <img src={src} alt="" onError={() => setImgErr(true)}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%',
+                     objectFit: 'cover', objectPosition: 'top center', borderRadius: '50%' }} />
+        : <svg style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', opacity: .35 }}
+            width={size} height={size * 1.15} viewBox="0 0 100 115">
+            <ellipse cx={50} cy={34} rx={21} ry={25} fill="#c8bdb0" />
+            <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
+          </svg>
+      }
     </div>
   )
 }
@@ -177,7 +184,7 @@ export default function EnrollProfile() {
       <div className={s.body}>
 
         <div className={s.headerCard}>
-          <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} size={52} />
+          <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={52} />
 
           <div className={s.headerInfo}>
             {editing ? (
@@ -340,31 +347,49 @@ export default function EnrollProfile() {
             <div className={s.empty}>Chưa có session nào</div>
           ) : (
             <div className={s.timeline}>
-              {p.sessions.map((ses, i) => (
-                <div key={ses.id} className={s.tlItem}>
-                  <div className={s.tlDotCol}>
-                    <div className={`${s.tlDot}
-                      ${ses.status === 'enrolled' ? s.dotGreen
-                        : ses.status === 'low_quality' ? s.dotAmber
-                        : s.dotDim}`} />
-                    {i < p.sessions.length - 1 && <div className={s.tlLine} />}
-                  </div>
-                  <div className={s.tlContent}>
-                    <div className={s.tlHead}>
-                      <span className={s.tlTime}>{fmtDt(ses.event_time_vn)}</span>
-                      <Tag text={ses.status} mod={STATUS_MOD[ses.status]} />
-                      {ses.is_new && <Tag text="first enroll" mod={s.tagBlue} />}
-                      <span className={s.tlQ}>{fmtPct(ses.overall_quality)}</span>
+              {p.sessions.map((ses, i) => {
+                const gateLogHref = (() => {
+                  if (!ses.event_time_vn) return null
+                  const d = new Date(ses.event_time_vn).toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
+                  const params = new URLSearchParams({ since: d, until: d })
+                  if (ses.room_label) params.set('room', ses.room_label)
+                  return `/gate-log?${params}`
+                })()
+                return (
+                  <div key={ses.id} className={s.tlItem}>
+                    <div className={s.tlDotCol}>
+                      <div className={`${s.tlDot}
+                        ${ses.status === 'enrolled' ? s.dotGreen
+                          : ses.status === 'low_quality' ? s.dotAmber
+                          : s.dotDim}`} />
+                      {i < p.sessions.length - 1 && <div className={s.tlLine} />}
                     </div>
-                    <div className={s.tlMeta}>
-                      {ses.room_label && <span>{ses.room_label}</span>}
-                      {ses.merge_sim != null && (
-                        <span>merge sim {ses.merge_sim.toFixed(2)}</span>
-                      )}
+                    <div className={s.tlContent}>
+                      <div className={s.tlHead}>
+                        <span className={s.tlTime}>{fmtDt(ses.event_time_vn)}</span>
+                        <Tag text={ses.status} mod={STATUS_MOD[ses.status]} />
+                        {ses.is_new && <Tag text="first enroll" mod={s.tagBlue} />}
+                        <span className={s.tlQ}>{fmtPct(ses.overall_quality)}</span>
+                        {gateLogHref && (
+                          <button
+                            className={s.tlLink}
+                            onClick={() => navigate(gateLogHref)}
+                            title="Xem trong Gate Log"
+                          >
+                            → Gate Log
+                          </button>
+                        )}
+                      </div>
+                      <div className={s.tlMeta}>
+                        {ses.room_label && <span>{ses.room_label}</span>}
+                        {ses.merge_sim != null && (
+                          <span>merge sim {ses.merge_sim.toFixed(2)}</span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

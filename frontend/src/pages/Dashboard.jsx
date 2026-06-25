@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -59,6 +60,7 @@ function LabelChip({ label, count, max }) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [stats, setStats]   = useState(null)
   const [trend, setTrend]   = useState(null)
   const [loading, setLoading] = useState(true)
@@ -207,7 +209,8 @@ export default function Dashboard() {
                 {trend.top_users.map((u, i) => {
                   const maxCount = u.labels?.[0]?.count ?? 1
                   return (
-                    <tr key={u.user_name}>
+                    <tr key={u.user_name} style={{ cursor: 'pointer' }}
+                      onClick={() => navigate(`/gate-log?user_name=${encodeURIComponent(u.user_name)}`)}>
                       <td className={s.rank}>{i + 1}</td>
                       <td className={s.tdName}>{u.user_name}</td>
                       <td className={s.tdLabels}>

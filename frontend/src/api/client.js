@@ -76,5 +76,9 @@ export const retryJob          = (id)         => api.post(`/api/enroll/jobs/${id
 export const retrySession      = (id)         => api.post(`/api/enroll/sessions/${id}/retry`)
 export const assignSession     = (id, body)   => api.post(`/api/enroll/sessions/${id}/assign`, body)
 export const searchProfiles    = (q)          => api.get('/api/enroll/profiles/search', { params: { q } })
+export const getEnrollByUnlock = (unlockId)   => api.get(`/api/enroll/sessions/by-unlock/${unlockId}`)
+
+// ── Airbnb ────────────────────────────────────────────────────────
+export const getAirbnbCalendar = (days = 30)  => api.get('/api/airbnb/calendar', { params: { days } })
 
 export default api

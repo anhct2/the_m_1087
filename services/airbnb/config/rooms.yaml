@@ -14,7 +14,7 @@ scraper:
   headless: true
   timeout_ms: 40000
   wait_after_load_ms: 5000
-  days_ahead: 90
+  days_ahead: 30
 
 cron:
   schedule: "0 18 * * *"

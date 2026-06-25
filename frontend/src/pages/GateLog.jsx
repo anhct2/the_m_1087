@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
-import { getSessions, getSessionClips } from '../api/client'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import { getSessions, getSessionClips, getEnrollByUnlock } from '../api/client'
 import { Icon, DirBadge, MethodTag, Spinner, Empty, ColHead } from '../components/UI'
 import s from './GateLog.module.css'
 
@@ -237,21 +238,32 @@ function CamPane({ camera, eventId, clipUrl, finalized }) {
 }
 
 /* ── Detail panel ─────────────────────────────────────────────── */
-function DetailPanel({ sessionId, sessionDir }) {
-  const [clips,   setClips]   = useState(null)
-  const [showAll, setShowAll] = useState(false)
-  const [loading, setLoading] = useState(false)
+function DetailPanel({ sessionId, sessionDir, unlockId }) {
+  const navigate  = useNavigate()
+  const [clips,      setClips]   = useState(null)
+  const [showAll,    setShowAll] = useState(false)
+  const [loading,    setLoading] = useState(false)
+  const [enrollInfo, setEnroll]  = useState(null)
 
   useEffect(() => {
     if (!sessionId) return
     let cancelled = false
-    setLoading(true); setClips(null); setShowAll(false)
+    setLoading(true); setClips(null); setShowAll(false); setEnroll(null)
     getSessionClips(sessionId)
       .then(r => { if (!cancelled) setClips(r.data) })
       .catch(() => { if (!cancelled) setClips([]) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [sessionId])
+
+  useEffect(() => {
+    if (!unlockId) { setEnroll(null); return }
+    let cancelled = false
+    getEnrollByUnlock(unlockId)
+      .then(r => { if (!cancelled && r.data?.id) setEnroll(r.data) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [unlockId])
 
   if (!sessionId) return (
     <div className={s.detEmpty}>
@@ -293,6 +305,21 @@ function DetailPanel({ sessionId, sessionDir }) {
               {best.frigate_event_id}
             </span>
           </div>
+          {enrollInfo && (
+            <div className={s.detMetaRow}>
+              <span className={s.mk}>Enroll</span>
+              <span className={s.mv}>
+                <span
+                  title="Xem trong Enroll"
+                  style={{ cursor: 'pointer', color: enrollInfo.status === 'enrolled' ? 'var(--in)' : 'var(--tmd)',
+                           textDecoration: 'underline', textUnderlineOffset: 3 }}
+                  onClick={() => navigate('/enroll?tab=sessions')}
+                >
+                  {enrollInfo.status} · {enrollInfo.persons_enrolled}/{enrollInfo.person_count} người
+                </span>
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -391,8 +418,8 @@ const EventRow = memo(function EventRow({ session, selected, onClick, onThumbCli
 })
 
 /* ── Filter bar ───────────────────────────────────────────────── */
-function FilterBar({ onApply }) {
-  const [f, setF] = useState({
+function FilterBar({ onApply, defaultFilters }) {
+  const [f, setF] = useState(defaultFilters || {
     since: yesterdayStr(), until: todayStr(),
     direction: '', user_name: '', rooms: [],
   })
@@ -432,6 +459,7 @@ function FilterBar({ onApply }) {
 
 /* ── Main ─────────────────────────────────────────────────────── */
 export default function GateLog() {
+  const [searchParams]  = useSearchParams()
   const [sessions,  setSessions]  = useState(null)
   const [total,     setTotal]     = useState(0)
   const [offset,    setOffset]    = useState(0)
@@ -440,7 +468,15 @@ export default function GateLog() {
   const [lb,        setLb]        = useState(null)   // { idx, camera }
   const [feedWidth, setFeedWidth] = useState(33.3)   // 1/3 + 2/3
 
-  const filtersRef    = useRef({ since: yesterdayStr(), until: todayStr(), direction:'', user_name:'', rooms:[] })
+  const initFilters = {
+    since:     searchParams.get('since')     || yesterdayStr(),
+    until:     searchParams.get('until')     || todayStr(),
+    direction: searchParams.get('direction') || '',
+    user_name: searchParams.get('user_name') || '',
+    rooms:     searchParams.get('room')      ? [searchParams.get('room')] : [],
+  }
+
+  const filtersRef    = useRef(initFilters)
   const offsetRef     = useRef(0)
   const bodyRef       = useRef(null)
   const isResizingRef = useRef(false)
@@ -492,7 +528,7 @@ export default function GateLog() {
 
   return (
     <div className={s.page}>
-      <FilterBar onApply={handleApply} />
+      <FilterBar onApply={handleApply} defaultFilters={initFilters} />
       <div className={s.body} ref={bodyRef} style={{'--feed-w': `${feedWidth}%`}}>
         <div className={s.feedCol}>
           <ColHead title="Dòng sự kiện" right={`${total} bản ghi`} />
@@ -504,7 +540,7 @@ export default function GateLog() {
                 key={`${sess.session_id}-${sess.event_time_local}`}
                 session={sess}
                 selected={selSess?.id === sess.session_id}
-                onClick={() => setSelSess({ id: sess.session_id, direction: sess.direction })}
+                onClick={() => setSelSess({ id: sess.session_id, direction: sess.direction, unlock_id: sess.unlock_id })}
                 onThumbClick={camera => setLb({ idx, camera })}
               />
             ))}
@@ -532,7 +568,7 @@ export default function GateLog() {
 
         <div className={s.detCol}>
           <ColHead title="Chi tiết sự kiện" right={selSess ? `Session #${selSess.id}` : 'Chọn sự kiện bên trái'} />
-          <DetailPanel sessionId={selSess?.id} sessionDir={selSess?.direction} />
+          <DetailPanel sessionId={selSess?.id} sessionDir={selSess?.direction} unlockId={selSess?.unlock_id} />
         </div>
       </div>
 

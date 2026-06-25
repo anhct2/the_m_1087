@@ -4,7 +4,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import os
 
-from .routers import auth, stats, sessions, users, media, rooms, enroll
+from .routers import auth, stats, sessions, users, media, rooms, enroll, airbnb
 from .core.config import get_settings
 from .core.db import get_conn
 from .core.frigate_session import frigate_mgr
@@ -34,6 +34,7 @@ app.include_router(users.router,    prefix="/api/users",    tags=["users"])
 app.include_router(media.router,    prefix="/api/media",    tags=["media"])   # no auth
 app.include_router(rooms.router,   prefix="/api/rooms",   tags=["rooms"])
 app.include_router(enroll.router,  prefix="/api/enroll",  tags=["enroll"])
+app.include_router(airbnb.router,  prefix="/api/airbnb",  tags=["airbnb"])
 
 # ── Health ───────────────────────────────────────────────────
 @app.get("/api/health", tags=["system"])

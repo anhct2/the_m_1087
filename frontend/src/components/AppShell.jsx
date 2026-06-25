@@ -10,6 +10,7 @@ const NAV = [
   { to: '/rooms',     icon: 'building',  label: 'Phòng' },
   { to: '/room-log',  icon: 'calendar',  label: 'Lịch phòng' },
   { to: '/enroll',    icon: 'users',     label: 'Enroll' },
+  { to: '/airbnb',   icon: 'calGrid',   label: 'Lịch Airbnb' },
 ]
 
 const Clock = memo(function Clock() {

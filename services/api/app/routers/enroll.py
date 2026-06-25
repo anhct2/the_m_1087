@@ -95,6 +95,22 @@ def list_sessions(
     return [dict(r) for r in rows]
 
 
+# ── Session by unlock_id (gate-log cross-link) ──────────────────
+# Must be BEFORE /sessions/{session_id} so FastAPI doesn't treat "by-unlock" as session_id
+@router.get("/sessions/by-unlock/{unlock_id}")
+def get_session_by_unlock(unlock_id: str, _=Depends(require_auth)):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, status, person_count, persons_enrolled
+                FROM enroll.enroll_sessions
+                WHERE unlock_id = %(uid)s
+                LIMIT 1
+            """, {"uid": unlock_id})
+            row = cur.fetchone()
+    return dict(row) if row else {}
+
+
 # ── Session detail ───────────────────────────────────────────────
 @router.get("/sessions/{session_id}")
 def get_session(session_id: str, _=Depends(require_auth)):
@@ -139,6 +155,36 @@ def get_session(session_id: str, _=Depends(require_auth)):
         "camera_clips": [dict(c) for c in clips],
         "persons": [dict(p) for p in persons],
     }
+
+
+# ── Search profiles (cho assign modal) ───────────────────────────
+# PHẢI đặt TRƯỚC /profiles/{person_id} để FastAPI không match "search" là person_id
+@router.get("/profiles/search")
+def search_profiles(
+    q:     str = Query(""),
+    limit: int = Query(10, ge=1, le=50),
+    _=Depends(require_auth),
+):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, display_name, known_room, confidence_lvl,
+                       gender, age_estimate, face_quality,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.person_session_map psm
+                        JOIN enroll.camera_clip_results ccr
+                          ON ccr.enroll_session_id = psm.enroll_session_id
+                        WHERE psm.person_id = pp.id
+                          AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS face_event_id
+                FROM enroll.person_profiles pp
+                WHERE is_active
+                  AND (display_name ILIKE %(q)s OR known_room ILIKE %(q)s)
+                ORDER BY last_seen_ts DESC
+                LIMIT %(limit)s
+            """, {"q": f"%{q}%", "limit": limit})
+            return [dict(r) for r in cur.fetchall()]
 
 
 # ── Profiles list ────────────────────────────────────────────────
@@ -192,8 +238,16 @@ def get_profile(person_id: str, _=Depends(require_auth)):
                 SELECT id, display_name, known_room, confidence_lvl,
                        face_quality, face_source_cam, face_frame_count,
                        age_estimate, gender, appearance_notes,
-                       enroll_count, first_seen_ts, last_seen_ts, body_ratio
-                FROM enroll.person_profiles WHERE id = %(pid)s
+                       enroll_count, first_seen_ts, last_seen_ts, body_ratio,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.person_session_map psm
+                        JOIN enroll.camera_clip_results ccr
+                          ON ccr.enroll_session_id = psm.enroll_session_id
+                        WHERE psm.person_id = pp.id
+                          AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS face_event_id
+                FROM enroll.person_profiles pp WHERE id = %(pid)s
             """, {"pid": person_id})
             row = cur.fetchone()
             if not row:
@@ -306,8 +360,8 @@ def backfill(body: dict, _=Depends(require_auth)):
                   {extra}
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gs.door_id
-                        AND jq.unlock_id = gs.unlock_id
+                      WHERE jq.door_id   = gs.door_id::text
+                        AND jq.unlock_id = gs.unlock_id::text
                         AND jq.status IN ('pending','running','done')
                   )
             """, params)
@@ -321,7 +375,7 @@ def backfill(body: dict, _=Depends(require_auth)):
                          status, scheduled_at)
                     VALUES (%(d)s, %(u)s, %(t)s, %(r)s, 'pending', now())
                     ON CONFLICT (door_id, unlock_id) DO NOTHING
-                """, {"d": r["door_id"], "u": r["unlock_id"],
+                """, {"d": str(r["door_id"]), "u": str(r["unlock_id"]),
                       "t": r["event_time_vn"], "r": r["room_label"]})
                 if cur.rowcount:
                     count += 1
@@ -458,27 +512,6 @@ def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
             """, {"pid": profile_id})
         conn.commit()
     return {"ok": True, "profile_id": profile_id}
-
-
-# ── Search profiles (cho assign modal) ───────────────────────────
-@router.get("/profiles/search")
-def search_profiles(
-    q:     str = Query(""),
-    limit: int = Query(10, ge=1, le=50),
-    _=Depends(require_auth),
-):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, display_name, known_room, confidence_lvl,
-                       gender, age_estimate, face_quality
-                FROM enroll.person_profiles
-                WHERE is_active
-                  AND (display_name ILIKE %(q)s OR known_room ILIKE %(q)s)
-                ORDER BY last_seen_ts DESC
-                LIMIT %(limit)s
-            """, {"q": f"%{q}%", "limit": limit})
-            return [dict(r) for r in cur.fetchall()]
 
 
 # ── Re-enroll: reset job để worker f87 xử lý lại ────────────────
