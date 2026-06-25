@@ -4,7 +4,7 @@ import {
   getEnrollSummary, getEnrollQueue, getEnrollSessions,
   getEnrollSession, getEnrollProfiles, patchEnrollProfile,
   getOccupancy, getEnrollJobs, postBackfill, cancelJob, retryJob,
-  retrySession, assignSession, searchProfiles,
+  retrySession, postReleaseStuck, assignSession, searchProfiles,
 } from '../api/client'
 import { Icon, Spinner, Empty, Lightbox } from '../components/UI'
 import s from './Enroll.module.css'
@@ -876,10 +876,18 @@ function OccupancyTab() {
 }
 
 // ── Jobs Tab ──────────────────────────────────────────────────────
+const STUCK_MS = 5 * 60 * 1000  // job running > 5 phút = kẹt
+
+function isStuckJob(r) {
+  return r.status === 'running' && r.started_at &&
+    (Date.now() - new Date(r.started_at).getTime()) > STUCK_MS
+}
+
 function JobsTab({ onRefreshStats }) {
-  const [rows,    setRows]    = useState([])
-  const [loading, setLoading] = useState(true)
-  const [statusF, setStatusF] = useState('')
+  const [rows,     setRows]     = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [resetting, setReset]   = useState(false)
+  const [statusF,  setStatusF]  = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -905,6 +913,20 @@ function JobsTab({ onRefreshStats }) {
     }
   }
 
+  const handleReleaseStuck = async () => {
+    setReset(true)
+    try {
+      const { data } = await postReleaseStuck()
+      load(); onRefreshStats?.()
+      alert(`Đã reset: ${data.jobs_reset} job${data.jobs_reset !== 1 ? 's' : ''}, ${data.sessions_reset} session${data.sessions_reset !== 1 ? 's' : ''}`)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Lỗi khi reset')
+    } finally { setReset(false) }
+  }
+
+  const hasRunning = rows.some(r => r.status === 'running')
+  const hasStuck   = rows.some(isStuckJob)
+
   return (
     <div>
       <div className={s.filterRow}>
@@ -915,6 +937,16 @@ function JobsTab({ onRefreshStats }) {
           ))}
         </select>
         <button className={s.btnSecondary} onClick={load}><Icon name="refresh" size={13} /> Làm mới</button>
+        {hasRunning && (
+          <button
+            className={`${s.btnSecondary} ${hasStuck ? s.btnWarn : ''}`}
+            onClick={handleReleaseStuck}
+            disabled={resetting}
+            title="Reset tất cả jobs đang ở trạng thái running về pending, và sessions processing về failed"
+          >
+            {resetting ? <Spinner size={12} /> : '⚠'} Reset bị kẹt
+          </button>
+        )}
         <span className={s.filterMeta}>{rows.length} jobs</span>
       </div>
       <div className={s.tableWrap}>
@@ -931,19 +963,24 @@ function JobsTab({ onRefreshStats }) {
               <th>Finished</th>
               <th>Worker</th>
               <th>Lỗi</th>
-              <th style={{ width: 60 }}></th>
+              <th style={{ width: 72 }}></th>
             </tr>
           </thead>
           <tbody>
             {loading && <tr><td colSpan={11} className={s.tdCenter}><Spinner /></td></tr>}
             {!loading && rows.length === 0 && <tr><td colSpan={11} className={s.tdCenter}><Empty /></td></tr>}
-            {!loading && rows.map(r => (
+            {!loading && rows.map(r => {
+              const stuck = isStuckJob(r)
+              return (
               <tr key={r.id}
-                className={`${s.tableRow} ${ROW_CLS[r.status] || ''}`}>
+                className={`${s.tableRow} ${ROW_CLS[r.status] || ''} ${stuck ? s.rowStuck : ''}`}>
                 <td className={s.tdMuted}>{r.id}</td>
                 <td><span className={`${s.badge} ${s.stTeal}`}>{r.room_label}</span></td>
                 <td className={s.tdTime}>{fmtDt(r.event_time_vn)}</td>
-                <td><StatusBadge status={r.status} /></td>
+                <td>
+                  <StatusBadge status={r.status} />
+                  {stuck && <span className={s.stuckTag}>kẹt</span>}
+                </td>
                 <td className={s.tdCenter}>
                   <span className={r.attempt_count >= r.max_attempts ? s.countGray : ''}>
                     {r.attempt_count}/{r.max_attempts}
@@ -971,7 +1008,7 @@ function JobsTab({ onRefreshStats }) {
                   </div>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
@@ -1010,8 +1047,9 @@ export default function Enroll() {
     return () => clearInterval(t)
   }, [])
 
-  const failedJobs  = queue.find(q => q.status === 'failed')?.cnt || 0
-  const pendingJobs = queue.find(q => q.status === 'pending')?.cnt || 0
+  const failedJobs   = queue.find(q => q.status === 'failed')?.cnt  || 0
+  const pendingJobs  = queue.find(q => q.status === 'pending')?.cnt || 0
+  const runningJobs  = queue.find(q => q.status === 'running')?.cnt || 0
 
   return (
     <div className={s.page}>
@@ -1027,6 +1065,14 @@ export default function Enroll() {
                 style={{ cursor: 'pointer' }}
                 onClick={() => setTab('jobs')}>
                 {failedJobs} jobs failed
+              </span>
+            )}
+            {runningJobs > 0 && (
+              <span className={`${s.badge} ${s.stRunning}`}
+                style={{ cursor: 'pointer' }}
+                title="Có jobs đang running — nếu worker f87 không chạy, hãy vào tab Jobs và nhấn 'Reset bị kẹt'"
+                onClick={() => setTab('jobs')}>
+                {runningJobs} running
               </span>
             )}
             {pendingJobs > 0 && (

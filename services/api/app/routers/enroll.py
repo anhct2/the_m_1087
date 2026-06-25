@@ -514,6 +514,37 @@ def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
     return {"ok": True, "profile_id": profile_id}
 
 
+# ── Release stuck jobs / sessions ───────────────────────────────
+@router.post("/release-stuck")
+def release_stuck_endpoint(_=Depends(require_auth)):
+    """
+    Reset jobs kẹt ở 'running' về 'pending' và sessions kẹt ở
+    'processing' về 'failed'. Dùng khi worker f87 bị offline.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # 1. Reset job_queue running → pending (tất cả, bất kể thời gian)
+            cur.execute("SELECT enroll.release_stuck(0) AS n")
+            n_jobs = int(cur.fetchone()["n"] or 0)
+
+            # 2. Reset sessions còn processing mà không có job running nào đang xử lý
+            cur.execute("""
+                UPDATE enroll.enroll_sessions
+                SET status      = 'failed',
+                    error_msg   = 'Worker không chạy — reset thủ công',
+                    finished_at = now()
+                WHERE status = 'processing'
+                  AND finished_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM enroll.job_queue jq
+                      WHERE jq.id = job_id AND jq.status = 'running'
+                  )
+            """)
+            n_sessions = cur.rowcount
+        conn.commit()
+    return {"jobs_reset": n_jobs, "sessions_reset": n_sessions}
+
+
 # ── Re-enroll: reset job để worker f87 xử lý lại ────────────────
 @router.post("/profiles/{person_id}/re-enroll")
 def re_enroll_profile(person_id: str, _=Depends(require_auth)):
