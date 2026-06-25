@@ -12,7 +12,7 @@ import logging
 import random
 import time
 import yaml
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -81,6 +81,17 @@ def run():
                 calendar = scraper.scrape(room["airbnb_url"])
                 if not calendar:
                     raise ValueError("Scraper trả về rỗng — có thể bị block hoặc URL sai")
+
+                # Chỉ giữ 30 ngày tới để tránh lưu dữ liệu thừa
+                days_ahead = scraper_cfg.get("days_ahead", 30)
+                today      = date.today()
+                end_date   = today + timedelta(days=days_ahead)
+                calendar   = {
+                    d: v for d, v in calendar.items()
+                    if today <= date.fromisoformat(d) <= end_date
+                }
+                if not calendar:
+                    logger.warning(f"[{label}] Scraper có data nhưng không có ngày nào trong {days_ahead} ngày tới")
 
                 changed = db.upsert_calendar(room_id, run_id, calendar)
                 db.finish_run(run_id, status="success", days_fetched=len(calendar), days_updated=changed)
