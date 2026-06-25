@@ -6,7 +6,7 @@ import {
   getOccupancy, getEnrollJobs, postBackfill, cancelJob, retryJob,
   retrySession, assignSession, searchProfiles,
 } from '../api/client'
-import { Icon, Spinner, Empty } from '../components/UI'
+import { Icon, Spinner, Empty, Lightbox } from '../components/UI'
 import s from './Enroll.module.css'
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -56,6 +56,7 @@ function CamThumb({ camId, quality, status, eventId, width = 60, height = 42 }) 
   const pct   = q > 0.01 ? `${Math.round(q * 100)}%` : status === 'processing' ? '…' : '—'
   const label = !camId || camId === '—' ? 'no-cam' : camId.length > 14 ? camId.slice(0, 14) : camId
   const snapSrc = eventId ? `/api/media/snapshot/${eventId}` : null
+  const [lbOpen, setLbOpen] = useState(false)
 
   return (
     <div className={s.camThumb} style={{ width, height, border: `1px solid ${c}44` }}>
@@ -63,8 +64,9 @@ function CamThumb({ camId, quality, status, eventId, width = 60, height = 42 }) 
         <img
           src={snapSrc}
           alt={camId}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 1 }}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 1, cursor: 'zoom-in' }}
           onError={e => { e.currentTarget.style.display = 'none' }}
+          onClick={e => { e.stopPropagation(); setLbOpen(true) }}
         />
       ) : (
         <>
@@ -85,13 +87,15 @@ function CamThumb({ camId, quality, status, eventId, width = 60, height = 42 }) 
           <div className={s.camSpinner} />
         </div>
       )}
+      {lbOpen && snapSrc && <Lightbox src={snapSrc} onClose={() => setLbOpen(false)} />}
     </div>
   )
 }
 
 // ── FaceAvatar ────────────────────────────────────────────────────
-function FaceAvatar({ gender, confidence, eventId, size = 36 }) {
+function FaceAvatar({ gender, confidence, eventId, size = 36, noLightbox = false }) {
   const [imgErr, setImgErr] = useState(false)
+  const [lbOpen, setLbOpen] = useState(false)
   const bc  = CONF_META[confidence]?.color || '#475569'
   const bg  = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
   const src = eventId && !imgErr ? `/api/media/snapshot/${eventId}` : null
@@ -102,7 +106,10 @@ function FaceAvatar({ gender, confidence, eventId, size = 36 }) {
       background: `radial-gradient(circle at 50% 62%, ${bg} 0%, #050810 100%)`,
       border: `2px solid ${bc}55`,
       boxShadow: `0 0 0 2px ${bc}1a, 0 2px 8px rgba(0,0,0,.6)`,
-    }}>
+      cursor: src && !noLightbox ? 'zoom-in' : undefined,
+    }}
+      onClick={src && !noLightbox ? e => { e.stopPropagation(); setLbOpen(true) } : undefined}
+    >
       {src
         ? <img src={src} alt="" style={{ position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', objectPosition:'top center', borderRadius:'50%' }}
             onError={() => setImgErr(true)} />
@@ -111,6 +118,7 @@ function FaceAvatar({ gender, confidence, eventId, size = 36 }) {
             <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
           </svg>
       }
+      {lbOpen && src && <Lightbox src={src} onClose={() => setLbOpen(false)} />}
     </div>
   )
 }
@@ -240,7 +248,7 @@ function AssignModal({ session, onClose, onDone }) {
               )}
               {results.map(p => (
                 <div key={p.id} className={s.searchRow} onClick={() => doAssign(p.id)}>
-                  <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={30} />
+                  <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={30} noLightbox />
                   <div className={s.searchInfo}>
                     <div className={s.searchName}>{p.display_name || `Unknown ${p.id.slice(0,6)}`}</div>
                     <div className={s.searchMeta}>{p.known_room} · quality {p.face_quality?.toFixed(2)}</div>

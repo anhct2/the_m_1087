@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getEnrollProfile, patchEnrollProfile, postReenroll } from '../api/client'
-import { Icon, Spinner } from '../components/UI'
+import { Icon, Spinner, Lightbox } from '../components/UI'
 import s from './EnrollProfile.module.css'
 
 const VN_TZ = 'Asia/Ho_Chi_Minh'
@@ -49,6 +49,7 @@ const CONF_COLOR = {
 
 function FaceAvatar({ gender, confidence, eventId, size = 52 }) {
   const [imgErr, setImgErr] = useState(false)
+  const [lbOpen, setLbOpen] = useState(false)
   const bc  = CONF_COLOR[confidence] || '#475569'
   const bg  = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
   const src = eventId && !imgErr ? `/api/media/snapshot/${eventId}` : null
@@ -59,7 +60,10 @@ function FaceAvatar({ gender, confidence, eventId, size = 52 }) {
       background: `radial-gradient(circle at 50% 62%, ${bg} 0%, #050810 100%)`,
       border: `2px solid ${bc}55`,
       boxShadow: `0 0 0 2px ${bc}1a, 0 2px 8px rgba(0,0,0,.6)`,
-    }}>
+      cursor: src ? 'zoom-in' : undefined,
+    }}
+      onClick={src ? () => setLbOpen(true) : undefined}
+    >
       {src
         ? <img src={src} alt="" onError={() => setImgErr(true)}
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%',
@@ -70,6 +74,7 @@ function FaceAvatar({ gender, confidence, eventId, size = 52 }) {
             <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
           </svg>
       }
+      {lbOpen && src && <Lightbox src={src} onClose={() => setLbOpen(false)} />}
     </div>
   )
 }
