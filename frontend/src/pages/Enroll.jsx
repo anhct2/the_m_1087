@@ -486,7 +486,8 @@ function SessionsTab() {
   const [detail,    setDetail]  = useState(null)
   const [detailL,   setDL]      = useState(false)
   const [assignSes, setAssign]  = useState(null)
-  const [resetting, setReset]   = useState(false)
+  const [resetting,   setReset]       = useState(false)
+  const [retryingAll, setRetryingAll] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -545,6 +546,15 @@ function SessionsTab() {
     r.status === 'processing' && r.created_at &&
     (Date.now() - new Date(r.created_at).getTime()) > STUCK_SESSION_MS
   )
+  const processingRows = rows.filter(r => r.status === 'processing')
+
+  const handleRetryAll = async () => {
+    setRetryingAll(true)
+    try {
+      await Promise.all(processingRows.map(r => retrySession(r.id).catch(() => {})))
+      load()
+    } finally { setRetryingAll(false) }
+  }
 
   return (
     <div>
@@ -561,6 +571,16 @@ function SessionsTab() {
         <button className={s.btnSecondary} onClick={load}>
           <Icon name="refresh" size={13} /> Làm mới
         </button>
+        {processingRows.length > 0 && (
+          <button
+            className={s.btnSecondary}
+            onClick={handleRetryAll}
+            disabled={retryingAll}
+            title="Retry tất cả sessions đang processing"
+          >
+            {retryingAll ? <Spinner size={12} /> : '↺'} Retry {processingRows.length} processing
+          </button>
+        )}
         {stuckSessions.length > 0 && (
           <button
             className={`${s.btnSecondary} ${s.btnWarn}`}
@@ -667,14 +687,21 @@ function SessionsTab() {
         </table>
       </div>
 
-      {detailL && <div className={s.detailLoading}><Spinner /></div>}
-      {detail && !detailL && (
-        <SessionDetail
-          d={detail}
-          onClose={() => { setDetail(null); setSel(null) }}
-          onRetry={handleRetry}
-          onAssign={() => setAssign(detail)}
-        />
+      {(detail || detailL) && (
+        <>
+          <div className={s.detailDrawerBg} onClick={() => { setDetail(null); setSel(null) }} />
+          <div className={s.detailDrawer}>
+            {detailL
+              ? <div className={s.detailLoading}><Spinner /></div>
+              : <SessionDetail
+                  d={detail}
+                  onClose={() => { setDetail(null); setSel(null) }}
+                  onRetry={handleRetry}
+                  onAssign={() => setAssign(detail)}
+                />
+            }
+          </div>
+        </>
       )}
 
       {assignSes && (
