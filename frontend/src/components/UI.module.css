@@ -47,6 +47,36 @@
 .emptyIcon { font-size: 34px; opacity: .25; }
 .empty p   { font-size: 12.5px; }
 
+/* ── Lightbox ── */
+.lbOverlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,.88);
+  display: flex; align-items: center; justify-content: center;
+  cursor: zoom-out;
+  animation: lbIn .12s ease;
+}
+@keyframes lbIn { from { opacity: 0 } to { opacity: 1 } }
+.lbImg {
+  max-width: 90vw; max-height: 88vh;
+  object-fit: contain; border-radius: 3px;
+  box-shadow: 0 12px 60px rgba(0,0,0,.9);
+  cursor: default;
+  animation: lbScale .15s ease;
+}
+@keyframes lbScale {
+  from { transform: scale(.94); opacity: 0 }
+  to   { transform: scale(1);   opacity: 1 }
+}
+.lbClose {
+  position: absolute; top: 16px; right: 16px;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 50%; width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; cursor: pointer; transition: background .12s;
+}
+.lbClose:hover { background: rgba(255,255,255,.22); }
+
 /* ── Col head ── */
 .colHead {
   display: flex; align-items: center; justify-content: space-between;

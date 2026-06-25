@@ -4,9 +4,9 @@ import {
   getEnrollSummary, getEnrollQueue, getEnrollSessions,
   getEnrollSession, getEnrollProfiles, patchEnrollProfile,
   getOccupancy, getEnrollJobs, postBackfill, cancelJob, retryJob,
-  retrySession, assignSession, searchProfiles,
+  retrySession, postReleaseStuck, assignSession, searchProfiles,
 } from '../api/client'
-import { Icon, Spinner, Empty } from '../components/UI'
+import { Icon, Spinner, Empty, Lightbox } from '../components/UI'
 import s from './Enroll.module.css'
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -56,6 +56,7 @@ function CamThumb({ camId, quality, status, eventId, width = 60, height = 42 }) 
   const pct   = q > 0.01 ? `${Math.round(q * 100)}%` : status === 'processing' ? '…' : '—'
   const label = !camId || camId === '—' ? 'no-cam' : camId.length > 14 ? camId.slice(0, 14) : camId
   const snapSrc = eventId ? `/api/media/snapshot/${eventId}` : null
+  const [lbOpen, setLbOpen] = useState(false)
 
   return (
     <div className={s.camThumb} style={{ width, height, border: `1px solid ${c}44` }}>
@@ -63,8 +64,9 @@ function CamThumb({ camId, quality, status, eventId, width = 60, height = 42 }) 
         <img
           src={snapSrc}
           alt={camId}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 1 }}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 1, cursor: 'zoom-in' }}
           onError={e => { e.currentTarget.style.display = 'none' }}
+          onClick={e => { e.stopPropagation(); setLbOpen(true) }}
         />
       ) : (
         <>
@@ -85,13 +87,15 @@ function CamThumb({ camId, quality, status, eventId, width = 60, height = 42 }) 
           <div className={s.camSpinner} />
         </div>
       )}
+      {lbOpen && snapSrc && <Lightbox src={snapSrc} onClose={() => setLbOpen(false)} />}
     </div>
   )
 }
 
 // ── FaceAvatar ────────────────────────────────────────────────────
-function FaceAvatar({ gender, confidence, eventId, size = 36 }) {
+function FaceAvatar({ gender, confidence, eventId, size = 36, noLightbox = false }) {
   const [imgErr, setImgErr] = useState(false)
+  const [lbOpen, setLbOpen] = useState(false)
   const bc  = CONF_META[confidence]?.color || '#475569'
   const bg  = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
   const src = eventId && !imgErr ? `/api/media/snapshot/${eventId}` : null
@@ -102,7 +106,10 @@ function FaceAvatar({ gender, confidence, eventId, size = 36 }) {
       background: `radial-gradient(circle at 50% 62%, ${bg} 0%, #050810 100%)`,
       border: `2px solid ${bc}55`,
       boxShadow: `0 0 0 2px ${bc}1a, 0 2px 8px rgba(0,0,0,.6)`,
-    }}>
+      cursor: src && !noLightbox ? 'zoom-in' : undefined,
+    }}
+      onClick={src && !noLightbox ? e => { e.stopPropagation(); setLbOpen(true) } : undefined}
+    >
       {src
         ? <img src={src} alt="" style={{ position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', objectPosition:'top center', borderRadius:'50%' }}
             onError={() => setImgErr(true)} />
@@ -111,6 +118,7 @@ function FaceAvatar({ gender, confidence, eventId, size = 36 }) {
             <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
           </svg>
       }
+      {lbOpen && src && <Lightbox src={src} onClose={() => setLbOpen(false)} />}
     </div>
   )
 }
@@ -240,7 +248,7 @@ function AssignModal({ session, onClose, onDone }) {
               )}
               {results.map(p => (
                 <div key={p.id} className={s.searchRow} onClick={() => doAssign(p.id)}>
-                  <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={30} />
+                  <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={30} noLightbox />
                   <div className={s.searchInfo}>
                     <div className={s.searchName}>{p.display_name || `Unknown ${p.id.slice(0,6)}`}</div>
                     <div className={s.searchMeta}>{p.known_room} · quality {p.face_quality?.toFixed(2)}</div>
@@ -868,10 +876,18 @@ function OccupancyTab() {
 }
 
 // ── Jobs Tab ──────────────────────────────────────────────────────
+const STUCK_MS = 5 * 60 * 1000  // job running > 5 phút = kẹt
+
+function isStuckJob(r) {
+  return r.status === 'running' && r.started_at &&
+    (Date.now() - new Date(r.started_at).getTime()) > STUCK_MS
+}
+
 function JobsTab({ onRefreshStats }) {
-  const [rows,    setRows]    = useState([])
-  const [loading, setLoading] = useState(true)
-  const [statusF, setStatusF] = useState('')
+  const [rows,     setRows]     = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [resetting, setReset]   = useState(false)
+  const [statusF,  setStatusF]  = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -897,6 +913,20 @@ function JobsTab({ onRefreshStats }) {
     }
   }
 
+  const handleReleaseStuck = async () => {
+    setReset(true)
+    try {
+      const { data } = await postReleaseStuck()
+      load(); onRefreshStats?.()
+      alert(`Đã reset: ${data.jobs_reset} job${data.jobs_reset !== 1 ? 's' : ''}, ${data.sessions_reset} session${data.sessions_reset !== 1 ? 's' : ''}`)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Lỗi khi reset')
+    } finally { setReset(false) }
+  }
+
+  const hasRunning = rows.some(r => r.status === 'running')
+  const hasStuck   = rows.some(isStuckJob)
+
   return (
     <div>
       <div className={s.filterRow}>
@@ -907,6 +937,16 @@ function JobsTab({ onRefreshStats }) {
           ))}
         </select>
         <button className={s.btnSecondary} onClick={load}><Icon name="refresh" size={13} /> Làm mới</button>
+        {hasRunning && (
+          <button
+            className={`${s.btnSecondary} ${hasStuck ? s.btnWarn : ''}`}
+            onClick={handleReleaseStuck}
+            disabled={resetting}
+            title="Reset tất cả jobs đang ở trạng thái running về pending, và sessions processing về failed"
+          >
+            {resetting ? <Spinner size={12} /> : '⚠'} Reset bị kẹt
+          </button>
+        )}
         <span className={s.filterMeta}>{rows.length} jobs</span>
       </div>
       <div className={s.tableWrap}>
@@ -923,19 +963,24 @@ function JobsTab({ onRefreshStats }) {
               <th>Finished</th>
               <th>Worker</th>
               <th>Lỗi</th>
-              <th style={{ width: 60 }}></th>
+              <th style={{ width: 72 }}></th>
             </tr>
           </thead>
           <tbody>
             {loading && <tr><td colSpan={11} className={s.tdCenter}><Spinner /></td></tr>}
             {!loading && rows.length === 0 && <tr><td colSpan={11} className={s.tdCenter}><Empty /></td></tr>}
-            {!loading && rows.map(r => (
+            {!loading && rows.map(r => {
+              const stuck = isStuckJob(r)
+              return (
               <tr key={r.id}
-                className={`${s.tableRow} ${ROW_CLS[r.status] || ''}`}>
+                className={`${s.tableRow} ${ROW_CLS[r.status] || ''} ${stuck ? s.rowStuck : ''}`}>
                 <td className={s.tdMuted}>{r.id}</td>
                 <td><span className={`${s.badge} ${s.stTeal}`}>{r.room_label}</span></td>
                 <td className={s.tdTime}>{fmtDt(r.event_time_vn)}</td>
-                <td><StatusBadge status={r.status} /></td>
+                <td>
+                  <StatusBadge status={r.status} />
+                  {stuck && <span className={s.stuckTag}>kẹt</span>}
+                </td>
                 <td className={s.tdCenter}>
                   <span className={r.attempt_count >= r.max_attempts ? s.countGray : ''}>
                     {r.attempt_count}/{r.max_attempts}
@@ -963,7 +1008,7 @@ function JobsTab({ onRefreshStats }) {
                   </div>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
@@ -1002,8 +1047,9 @@ export default function Enroll() {
     return () => clearInterval(t)
   }, [])
 
-  const failedJobs  = queue.find(q => q.status === 'failed')?.cnt || 0
-  const pendingJobs = queue.find(q => q.status === 'pending')?.cnt || 0
+  const failedJobs   = queue.find(q => q.status === 'failed')?.cnt  || 0
+  const pendingJobs  = queue.find(q => q.status === 'pending')?.cnt || 0
+  const runningJobs  = queue.find(q => q.status === 'running')?.cnt || 0
 
   return (
     <div className={s.page}>
@@ -1019,6 +1065,14 @@ export default function Enroll() {
                 style={{ cursor: 'pointer' }}
                 onClick={() => setTab('jobs')}>
                 {failedJobs} jobs failed
+              </span>
+            )}
+            {runningJobs > 0 && (
+              <span className={`${s.badge} ${s.stRunning}`}
+                style={{ cursor: 'pointer' }}
+                title="Có jobs đang running — nếu worker f87 không chạy, hãy vào tab Jobs và nhấn 'Reset bị kẹt'"
+                onClick={() => setTab('jobs')}>
+                {runningJobs} running
               </span>
             )}
             {pendingJobs > 0 && (

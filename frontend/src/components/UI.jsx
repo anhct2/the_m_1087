@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import s from './UI.module.css'
 
 /* ── SVG Icons ──────────────────────────────────────────── */
@@ -109,5 +111,29 @@ export function ColHead({ title, right }) {
       <span className={s.colTitle}>{title}</span>
       {right && <span className={s.colRight}>{right}</span>}
     </div>
+  )
+}
+
+/* ── Lightbox ────────────────────────────────────────────── */
+export function Lightbox({ src, onClose }) {
+  useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', h)
+    return () => document.removeEventListener('keydown', h)
+  }, [onClose])
+
+  return createPortal(
+    <div className={s.lbOverlay} onClick={onClose}>
+      <button className={s.lbClose} onClick={e => { e.stopPropagation(); onClose() }}>
+        <Icon name="x" size={16} />
+      </button>
+      <img
+        className={s.lbImg}
+        src={src}
+        alt=""
+        onClick={e => e.stopPropagation()}
+      />
+    </div>,
+    document.body
   )
 }

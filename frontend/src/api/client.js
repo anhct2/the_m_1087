@@ -74,6 +74,7 @@ export const postBackfill      = (body)       => api.post('/api/enroll/backfill'
 export const cancelJob         = (id)         => api.delete(`/api/enroll/jobs/${id}`)
 export const retryJob          = (id)         => api.post(`/api/enroll/jobs/${id}/retry`)
 export const retrySession      = (id)         => api.post(`/api/enroll/sessions/${id}/retry`)
+export const postReleaseStuck  = ()           => api.post('/api/enroll/release-stuck')
 export const assignSession     = (id, body)   => api.post(`/api/enroll/sessions/${id}/assign`, body)
 export const searchProfiles    = (q)          => api.get('/api/enroll/profiles/search', { params: { q } })
 export const getEnrollByUnlock = (unlockId)   => api.get(`/api/enroll/sessions/by-unlock/${unlockId}`)
