@@ -171,22 +171,39 @@ def create_session(job_id: int, door_id: str, unlock_id: str,
     sid = str(uuid.uuid4())
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # On retry: keep existing id (FK from camera_clip_results), reset all result fields
             cur.execute("""
                 INSERT INTO enroll.enroll_sessions
                     (id,job_id,door_id,unlock_id,event_time_vn,room_label,status)
                 VALUES (%(sid)s,%(jid)s,%(d)s,%(u)s,%(t)s,%(r)s,'processing')
                 ON CONFLICT (door_id, unlock_id) DO UPDATE SET
-                    id          = EXCLUDED.id,
-                    job_id      = EXCLUDED.job_id,
-                    status      = 'processing',
-                    finished_at = NULL,
-                    error_msg   = NULL
+                    job_id           = EXCLUDED.job_id,
+                    status           = 'processing',
+                    person_count     = 0,
+                    persons_enrolled = 0,
+                    overall_quality  = NULL,
+                    best_face_score  = NULL,
+                    stopped_at_cam   = NULL,
+                    used_video       = false,
+                    fetch_ms         = NULL,
+                    extract_ms       = NULL,
+                    total_ms         = NULL,
+                    error_msg        = NULL,
+                    warnings         = NULL,
+                    finished_at      = NULL
                 RETURNING id
             """, {"sid": sid, "jid": job_id, "d": door_id,
                   "u": unlock_id, "t": event_time_vn, "r": room_label})
-            row = cur.fetchone()
+            actual_sid = cur.fetchone()[0]
+            # Clean up previous attempt's results so retry starts fresh
+            cur.execute(
+                "DELETE FROM enroll.camera_clip_results WHERE enroll_session_id = %s",
+                (actual_sid,))
+            cur.execute(
+                "DELETE FROM enroll.person_session_map WHERE enroll_session_id = %s",
+                (actual_sid,))
         conn.commit()
-    return row[0]
+    return actual_sid
 
 
 def update_session(sid: str, **kw) -> None:
