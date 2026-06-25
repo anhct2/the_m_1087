@@ -74,15 +74,21 @@ def list_sessions(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"""
-                SELECT id, job_id, room_label, event_time_vn, status,
-                       person_count, persons_enrolled,
-                       overall_quality, best_face_score,
-                       stopped_at_cam, used_video, total_ms,
-                       error_msg, warnings, created_at,
-                       direction, user_name, method
-                FROM enroll.v_sessions
+                SELECT vs.id, vs.job_id, vs.room_label, vs.event_time_vn, vs.status,
+                       vs.person_count, vs.persons_enrolled,
+                       vs.overall_quality, vs.best_face_score,
+                       vs.stopped_at_cam, vs.used_video, vs.total_ms,
+                       vs.error_msg, vs.warnings, vs.created_at,
+                       vs.direction, vs.user_name, vs.method,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.camera_clip_results ccr
+                        WHERE ccr.enroll_session_id = vs.id
+                          AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS snap_event_id
+                FROM enroll.v_sessions vs
                 WHERE {' AND '.join(filters)}
-                ORDER BY event_time_vn DESC
+                ORDER BY vs.event_time_vn DESC
                 LIMIT %(limit)s OFFSET %(offset)s
             """, params)
             rows = cur.fetchall()
@@ -103,12 +109,16 @@ def get_session(session_id: str, _=Depends(require_auth)):
                 raise HTTPException(404, "Session not found")
 
             cur.execute("""
-                SELECT camera_id, camera_order, source_type, frames_processed,
-                       persons_detected, confidence, face_score,
-                       stopped_here, has_multi_person, has_occlusion
-                FROM enroll.camera_clip_results
-                WHERE enroll_session_id = %(sid)s
-                ORDER BY camera_order
+                SELECT ccr.camera_id, ccr.camera_order, ccr.source_type,
+                       ccr.frames_processed, ccr.persons_detected,
+                       ccr.confidence, ccr.face_score,
+                       ccr.stopped_here, ccr.has_multi_person, ccr.has_occlusion,
+                       ccr.frigate_event_id,
+                       gsc.clip_url, gsc.clip_finalized, gsc.snapshot_url
+                FROM enroll.camera_clip_results ccr
+                LEFT JOIN gate_session_clips gsc ON gsc.id = ccr.gsc_id
+                WHERE ccr.enroll_session_id = %(sid)s
+                ORDER BY ccr.camera_order
             """, {"sid": session_id})
             clips = cur.fetchall()
 
@@ -153,13 +163,21 @@ def list_profiles(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"""
-                SELECT id, display_name, known_room, confidence_lvl,
-                       face_quality, face_source_cam, face_frame_count,
-                       age_estimate, gender, appearance_notes,
-                       enroll_count, last_seen_ts, body_ratio
-                FROM enroll.person_profiles
+                SELECT pp.id, pp.display_name, pp.known_room, pp.confidence_lvl,
+                       pp.face_quality, pp.face_source_cam, pp.face_frame_count,
+                       pp.age_estimate, pp.gender, pp.appearance_notes,
+                       pp.enroll_count, pp.last_seen_ts, pp.body_ratio,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.person_session_map psm
+                        JOIN enroll.camera_clip_results ccr
+                          ON ccr.enroll_session_id = psm.enroll_session_id
+                        WHERE psm.person_id = pp.id
+                          AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS face_event_id
+                FROM enroll.person_profiles pp
                 WHERE {' AND '.join(filters)}
-                ORDER BY last_seen_ts DESC
+                ORDER BY pp.last_seen_ts DESC
                 LIMIT %(limit)s OFFSET %(offset)s
             """, params)
             return [dict(r) for r in cur.fetchall()]
@@ -323,6 +341,30 @@ def cancel_job(job_id: int, _=Depends(require_auth)):
                 SET status='skipped', last_error='cancelled by user', finished_at=now()
                 WHERE id=%(jid)s AND status='pending'
             """, {"jid": job_id})
+        conn.commit()
+    return {"ok": True}
+
+
+# ── Retry failed job ─────────────────────────────────────────────
+@router.post("/jobs/{job_id}/retry")
+def retry_job(job_id: int, _=Depends(require_auth)):
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE enroll.job_queue SET
+                    status        = 'pending',
+                    attempt_count = 0,
+                    scheduled_at  = now(),
+                    last_error    = NULL,
+                    locked_by     = NULL,
+                    locked_at     = NULL,
+                    started_at    = NULL,
+                    finished_at   = NULL
+                WHERE id=%(jid)s AND status IN ('failed','skipped')
+            """, {"jid": job_id})
+            if cur.rowcount == 0:
+                raise HTTPException(400, "Job không ở trạng thái failed/skipped")
         conn.commit()
     return {"ok": True}
 

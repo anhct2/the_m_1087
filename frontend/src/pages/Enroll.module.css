@@ -1,7 +1,17 @@
 /* Enroll.module.css */
 
 /* ── Page ──────────────────────────────────────────────────── */
-.page { padding: 1.25rem 1.5rem; }
+.page {
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden; height: 100%;
+}
+.pageTop {
+  flex-shrink: 0; padding: 1.25rem 1.5rem 0;
+}
+.pageBody {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 0 1.5rem 2rem;
+}
 
 .pageHeader {
   display: flex; align-items: flex-start; gap: 12px;
@@ -189,7 +199,7 @@
 }
 
 /* ── Camera cards ────────────────────────────────────────── */
-.camGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.camGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
 .camCard {
   border: 1px solid var(--c-border); border-radius: 8px; padding: 10px 12px;
   background: rgba(255,255,255,.02);
@@ -205,6 +215,12 @@
   display: flex; gap: 6px; margin-top: 6px;
   font-size: 0.72rem; color: var(--c-text-2); flex-wrap: wrap; align-items: center;
 }
+.clipVideo {
+  width: 100%; border-radius: 6px; max-height: 160px;
+  background: #000; display: block;
+  border: 1px solid rgba(255,255,255,.1);
+}
+.noMedia { font-style: italic; opacity: 0.5; }
 
 /* ── Person card (in detail) ─────────────────────────────── */
 .personGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
@@ -247,21 +263,75 @@
 .editRow      { display: flex; gap: 4px; align-items: center; }
 .notes        { font-size: 0.72rem; color: var(--c-text-2); font-style: italic; margin-top: 4px; }
 
-/* ── Room grid (occupancy) ───────────────────────────────── */
-.roomGrid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px;
+/* ── Occupancy — summary row ──────────────────────────────── */
+.occSummaryRow {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
 }
-.roomCard {
-  background: var(--c-surface); border: 1px solid var(--c-border);
-  border-radius: 10px; padding: 12px 14px;
+.occStat        { display: flex; flex-direction: column; align-items: center; }
+.occStatVal     { font-size: 1.5rem; font-weight: 700; font-family: var(--mono, monospace); line-height: 1; }
+.occStatLabel   { font-size: 0.68rem; color: var(--c-text-2); text-transform: uppercase; letter-spacing: .05em; margin-top: 2px; }
+.occStatDiv     { width: 1px; height: 32px; background: var(--c-border); }
+
+/* ── Floor list ──────────────────────────────────────────── */
+.floorList      { display: flex; flex-direction: column; gap: 12px; }
+.floorRow       { display: flex; gap: 12px; align-items: flex-start; }
+.floorLabel     {
+  width: 56px; flex-shrink: 0;
+  font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--c-text-2); padding-top: 12px;
+  text-align: center;
 }
-.roomOccupied   { border-color: #4ade8055; background: #14532d11; }
-.roomHeader     { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.roomName       { font-size: 0.9rem; font-weight: 600; }
-.occupant       { font-size: 0.8rem; }
+.floorLabelActive { color: #4ade80; }
+.floorRooms     { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* ── Room box ─────────────────────────────────────────────── */
+.roomBox {
+  border-radius: 10px; border: 1px solid var(--c-border);
+  background: var(--c-surface); overflow: hidden; transition: border-color .15s;
+}
+.roomBoxOccupied { border-color: #4ade8044; background: #14532d0a; }
+.roomBoxEmpty    { opacity: 0.45; }
+
+.roomBoxHead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 8px; gap: 8px;
+}
+.roomBoxName    { font-size: 0.95rem; font-weight: 700; }
+.roomBoxCount   { font-size: 0.72rem; color: #4ade80; font-weight: 600;
+                  background: #14532d33; border: 1px solid #4ade8033;
+                  padding: 1px 8px; border-radius: 999px; }
+.roomBoxEmpty2  { font-size: 0.72rem; color: var(--c-text-2); }
+
+/* ── Guest rows ──────────────────────────────────────────── */
+.guestList { display: flex; flex-direction: column; border-top: 1px solid var(--c-border); }
+.guestRow  {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 8px 12px; cursor: pointer; transition: background .1s;
+  border-bottom: 1px solid var(--c-border);
+}
+.guestRow:last-child { border-bottom: none; }
+.guestRow:hover { background: rgba(255,255,255,.04); }
+
+.guestInfo    { flex: 1; min-width: 0; }
+.guestName    { font-size: 0.82rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guestMeta    { font-size: 0.72rem; color: var(--c-text-2); font-weight: 400; }
+.guestNotes   { font-size: 0.7rem; color: var(--c-text-2); font-style: italic; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guestDurRow  { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.guestDurTrack { flex: 1; height: 3px; background: rgba(255,255,255,.1); border-radius: 2px; }
+.guestDurFill  { height: 100%; border-radius: 2px; transition: width .4s; }
+.guestDurLabel { font-size: 0.68rem; font-weight: 600; font-family: var(--mono, monospace); min-width: 28px; color: var(--c-text-2); }
+.guestTime     { font-size: 0.65rem; color: var(--c-text-2); opacity: .7; margin-top: 1px; }
+
+/* Legacy (may still be referenced) */
+.roomGrid     { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.roomCard     { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 10px; padding: 12px 14px; }
+.roomOccupied { border-color: #4ade8055; background: #14532d11; }
+.roomHeader   { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.roomName     { font-size: 0.9rem; font-weight: 600; }
+.occupant     { font-size: 0.8rem; }
 .occupantBorder { padding-top: 6px; margin-top: 6px; border-top: 1px solid var(--c-border); }
-.occupantName   { font-weight: 500; }
-.occupantTime   { font-size: 0.68rem; color: var(--c-text-2); margin-top: 2px; }
+.occupantName { font-weight: 500; }
+.occupantTime { font-size: 0.68rem; color: var(--c-text-2); margin-top: 2px; }
 .occupancyMeta  { font-size: 0.8rem; color: var(--c-text-2); flex: 1; }
 
 /* ── Modal / overlay ─────────────────────────────────────── */
@@ -326,4 +396,100 @@
 }
 
 /* ── Misc ────────────────────────────────────────────────── */
-.center { display: flex; justify-content: center; padding: 2rem; }
+.center     { display: flex; justify-content: center; padding: 2rem; }
+.tdRight    { text-align: right; }
+.filterMeta { font-size: 0.78rem; color: var(--c-text-2); margin-left: auto; }
+
+/* ── CamThumb (surveillance frame) ──────────────────────── */
+.camThumb {
+  position: relative; border-radius: 4px; overflow: hidden; flex-shrink: 0;
+  background: linear-gradient(160deg, #05080d 0%, #0a1020 100%);
+  display: inline-flex;
+}
+.camScanline {
+  position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.05) 2px, rgba(0,0,0,.05) 3px);
+}
+.camSilhouette {
+  position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
+  opacity: 0.22; z-index: 3;
+}
+.camBox {
+  position: absolute; top: 11%; left: 50%; transform: translateX(-50%);
+  border-radius: 2px; z-index: 5;
+}
+.camQChip {
+  position: absolute; top: 2px; right: 2px; z-index: 6;
+  font-size: 7px; font-weight: 700; padding: 0 3px;
+  border-radius: 3px; font-family: monospace;
+}
+.camLabel {
+  position: absolute; bottom: 2px; left: 3px; z-index: 6;
+  color: rgba(148,163,184,.4); font-size: 7px;
+  font-family: monospace; overflow: hidden;
+  white-space: nowrap;
+}
+.camRec {
+  position: absolute; top: 3px; left: 3px; z-index: 6;
+  width: 4px; height: 4px; border-radius: 50%;
+  background: #ef4444;
+  animation: recPulse 2s ease-in-out infinite;
+}
+.camProcessing {
+  position: absolute; inset: 0; z-index: 7;
+  background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.camSpinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.15);
+  border-top-color: #60a5fa;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes recPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── FaceAvatar ──────────────────────────────────────────── */
+.faceAvatar {
+  position: relative; overflow: hidden; flex-shrink: 0; border-radius: 50%;
+}
+.faceAvatarSvg {
+  position: absolute; bottom: 0; left: 50%;
+  transform: translateX(-50%); opacity: 0.35;
+}
+
+/* ── Direction badges ────────────────────────────────────── */
+.dirIn  {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 700;
+  background: #1e3a8a44; color: #60a5fa; border: 1px solid #60a5fa55;
+  font-family: monospace; letter-spacing: 0.04em;
+}
+.dirOut {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 700;
+  background: #4c1d9544; color: #a78bfa; border: 1px solid #a78bfa55;
+  font-family: monospace; letter-spacing: 0.04em;
+}
+
+/* ── Profile card — centered vertical layout ─────────────── */
+.profileCard {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.profileCard:hover { border-color: #60a5fa55; background: rgba(255,255,255,.04); }
+.profileAvatar  { display: flex; justify-content: center; margin-bottom: 2px; }
+.profileName    { font-size: 0.85rem; font-weight: 600; text-align: center; }
+.profileSub     { font-size: 0.72rem; color: var(--c-text-2); text-align: center; margin-top: 1px; }
+.profileBadges  { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
+.profileFooter  {
+  display: flex; justify-content: space-between;
+  font-size: 0.68rem; color: var(--c-text-2); margin-top: 2px;
+  border-top: 1px solid var(--c-border); padding-top: 6px;
+}

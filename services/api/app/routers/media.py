@@ -4,7 +4,7 @@ Security: event_id format validation + backend Frigate session is separate from 
 """
 import re
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from ..core.frigate_session import frigate_mgr
 
 router = APIRouter()
@@ -30,5 +30,31 @@ async def proxy_snapshot(event_id: str):
     return Response(
         content=resp.content,
         media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.get("/clip/{event_id}")
+async def proxy_clip(event_id: str):
+    """Proxy video clip (.mp4) từ Frigate — không cần Bearer token."""
+    if not _EVENT_ID_RE.match(event_id):
+        raise HTTPException(400, "Invalid event_id")
+
+    try:
+        resp = await frigate_mgr.get(
+            f"/api/events/{event_id}/clip.mp4",
+            headers={"Accept": "video/mp4,video/*"},
+        )
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+    if resp.status_code == 404:
+        raise HTTPException(404, "Clip not found")
+    if resp.status_code != 200:
+        raise HTTPException(502, f"Frigate {resp.status_code}")
+
+    return Response(
+        content=resp.content,
+        media_type="video/mp4",
         headers={"Cache-Control": "public, max-age=3600"},
     )

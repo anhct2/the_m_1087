@@ -43,6 +43,29 @@ const CONF_LABEL = {
   appearance_only: 'appearance only',
   unknown:         'unknown',
 }
+const CONF_COLOR = {
+  gate_code: '#22c55e', camera_chain: '#0d9488', appearance_only: '#f59e0b', unknown: '#475569',
+}
+
+function FaceAvatar({ gender, confidence, size = 52 }) {
+  const bc = CONF_COLOR[confidence] || '#475569'
+  const bg = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', flexShrink: 0,
+      position: 'relative', overflow: 'hidden',
+      background: `radial-gradient(circle at 50% 62%, ${bg} 0%, #050810 100%)`,
+      border: `2px solid ${bc}55`,
+      boxShadow: `0 0 0 2px ${bc}1a, 0 2px 8px rgba(0,0,0,.6)`,
+    }}>
+      <svg style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', opacity: .35 }}
+        width={size} height={size * 1.15} viewBox="0 0 100 115">
+        <ellipse cx={50} cy={34} rx={21} ry={25} fill="#c8bdb0" />
+        <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
+      </svg>
+    </div>
+  )
+}
 const STATUS_MOD = {
   enrolled:     s.tagGreen,
   low_quality:  s.tagAmber,
@@ -154,9 +177,7 @@ export default function EnrollProfile() {
       <div className={s.body}>
 
         <div className={s.headerCard}>
-          <div className={s.avatar}>
-            {p.gender === 'female' ? '♀' : p.gender === 'male' ? '♂' : '?'}
-          </div>
+          <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} size={52} />
 
           <div className={s.headerInfo}>
             {editing ? (

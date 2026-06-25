@@ -128,3 +128,15 @@ Trong `services/api/app/core/auth.py` có comment hướng dẫn step-by-step. C
 1. Thêm `JWT_SECRET` vào `.env`
 2. Sửa `create_token()` và `verify_token()` trong `auth.py`
 3. Không cần đổi gì ở routers.
+
+
+
+
+# Dump nhanh (timestamp tự động)
+python3 dump_schema.py
+
+# Chỉ định output
+python3 dump_schema.py --out shared/db/before_migration.sql
+
+# DB khác
+python3 dump_schema.py --host other-host --db other_db --user other_user
