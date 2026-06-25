@@ -259,7 +259,7 @@ def upsert_profile(sid: str, room_label: str,
                     UPDATE enroll.person_profiles SET
                         face_embedding = CASE
                             WHEN %(fe)s IS NOT NULL AND face_embedding IS NOT NULL
-                            THEN (face_embedding*enroll_count + %(fe)s::vector)/(enroll_count+1)
+                            THEN (face_embedding*enroll_count::float8 + %(fe)s::vector)/(enroll_count+1)::float8
                             WHEN %(fe)s IS NOT NULL THEN %(fe)s::vector
                             ELSE face_embedding END,
                         face_quality     = GREATEST(COALESCE(face_quality,0),COALESCE(%(fq)s,0)),
