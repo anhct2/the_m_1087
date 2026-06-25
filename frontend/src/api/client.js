@@ -72,5 +72,8 @@ export const getOccupancy      = ()           => api.get('/api/enroll/occupancy'
 export const getEnrollJobs     = (params)     => api.get('/api/enroll/jobs', { params })
 export const postBackfill      = (body)       => api.post('/api/enroll/backfill', body)
 export const cancelJob         = (id)         => api.delete(`/api/enroll/jobs/${id}`)
+export const retrySession      = (id)         => api.post(`/api/enroll/sessions/${id}/retry`)
+export const assignSession     = (id, body)   => api.post(`/api/enroll/sessions/${id}/assign`, body)
+export const searchProfiles    = (q)          => api.get('/api/enroll/profiles/search', { params: { q } })
 
 export default api

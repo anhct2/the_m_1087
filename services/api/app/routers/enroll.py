@@ -74,7 +74,7 @@ def list_sessions(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"""
-                SELECT id, room_label, event_time_vn, status,
+                SELECT id, job_id, room_label, event_time_vn, status,
                        person_count, persons_enrolled,
                        overall_quality, best_face_score,
                        stopped_at_cam, used_video, total_ms,
@@ -325,6 +325,118 @@ def cancel_job(job_id: int, _=Depends(require_auth)):
             """, {"jid": job_id})
         conn.commit()
     return {"ok": True}
+
+
+# ── Retry session: reset job về pending ─────────────────────────
+@router.post("/sessions/{session_id}/retry")
+def retry_session(session_id: str, _=Depends(require_auth)):
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT job_id FROM enroll.enroll_sessions WHERE id = %(id)s",
+                {"id": session_id}
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Session not found")
+            job_id = row["job_id"]
+            if not job_id:
+                raise HTTPException(400, "Session không có job liên kết")
+
+            cur.execute("""
+                UPDATE enroll.enroll_sessions
+                SET status = 'processing', error_msg = NULL, warnings = NULL,
+                    finished_at = NULL
+                WHERE id = %(id)s
+            """, {"id": session_id})
+
+            cur.execute("""
+                UPDATE enroll.job_queue SET
+                    status        = 'pending',
+                    attempt_count = 0,
+                    scheduled_at  = now(),
+                    last_error    = NULL,
+                    locked_by     = NULL,
+                    locked_at     = NULL,
+                    started_at    = NULL,
+                    finished_at   = NULL
+                WHERE id = %(jid)s
+            """, {"jid": job_id})
+        conn.commit()
+    return {"ok": True, "job_id": job_id}
+
+
+# ── Gán thủ công profile vào session ────────────────────────────
+@router.post("/sessions/{session_id}/assign")
+def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
+    profile_id = (body.get("profile_id") or "").strip() or None
+    new_name   = (body.get("display_name") or "").strip() or None
+    new_room   = (body.get("known_room") or "").strip() or None
+
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT room_label FROM enroll.enroll_sessions WHERE id = %(id)s",
+                {"id": session_id}
+            )
+            ses = cur.fetchone()
+            if not ses:
+                raise HTTPException(404, "Session not found")
+
+            if not profile_id:
+                cur.execute("""
+                    INSERT INTO enroll.person_profiles
+                        (display_name, known_room, confidence_lvl)
+                    VALUES (%(name)s, %(room)s, 'gate_code')
+                    RETURNING id
+                """, {"name": new_name, "room": new_room or ses["room_label"]})
+                profile_id = str(cur.fetchone()["id"])
+
+            cur.execute("""
+                INSERT INTO enroll.person_session_map
+                    (person_id, enroll_session_id, is_new, merge_sim)
+                VALUES (%(pid)s, %(sid)s, false, 1.0)
+                ON CONFLICT (person_id, enroll_session_id) DO NOTHING
+            """, {"pid": profile_id, "sid": session_id})
+
+            cur.execute("""
+                UPDATE enroll.enroll_sessions
+                SET status = 'enrolled',
+                    persons_enrolled = GREATEST(persons_enrolled, 1)
+                WHERE id = %(id)s
+            """, {"id": session_id})
+
+            cur.execute("""
+                UPDATE enroll.person_profiles
+                SET last_seen_ts = now(), enroll_count = enroll_count + 1,
+                    updated_at = now()
+                WHERE id = %(pid)s
+            """, {"pid": profile_id})
+        conn.commit()
+    return {"ok": True, "profile_id": profile_id}
+
+
+# ── Search profiles (cho assign modal) ───────────────────────────
+@router.get("/profiles/search")
+def search_profiles(
+    q:     str = Query(""),
+    limit: int = Query(10, ge=1, le=50),
+    _=Depends(require_auth),
+):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, display_name, known_room, confidence_lvl,
+                       gender, age_estimate, face_quality
+                FROM enroll.person_profiles
+                WHERE is_active
+                  AND (display_name ILIKE %(q)s OR known_room ILIKE %(q)s)
+                ORDER BY last_seen_ts DESC
+                LIMIT %(limit)s
+            """, {"q": f"%{q}%", "limit": limit})
+            return [dict(r) for r in cur.fetchall()]
 
 
 # ── Re-enroll: reset job để worker f87 xử lý lại ────────────────
