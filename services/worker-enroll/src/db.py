@@ -175,10 +175,18 @@ def create_session(job_id: int, door_id: str, unlock_id: str,
                 INSERT INTO enroll.enroll_sessions
                     (id,job_id,door_id,unlock_id,event_time_vn,room_label,status)
                 VALUES (%(sid)s,%(jid)s,%(d)s,%(u)s,%(t)s,%(r)s,'processing')
+                ON CONFLICT (door_id, unlock_id) DO UPDATE SET
+                    id          = EXCLUDED.id,
+                    job_id      = EXCLUDED.job_id,
+                    status      = 'processing',
+                    finished_at = NULL,
+                    error_msg   = NULL
+                RETURNING id
             """, {"sid": sid, "jid": job_id, "d": door_id,
                   "u": unlock_id, "t": event_time_vn, "r": room_label})
+            row = cur.fetchone()
         conn.commit()
-    return sid
+    return row[0]
 
 
 def update_session(sid: str, **kw) -> None:
