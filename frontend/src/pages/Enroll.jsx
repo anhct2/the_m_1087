@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   getEnrollSummary, getEnrollQueue, getEnrollSessions,
   getEnrollSession, getEnrollProfiles, patchEnrollProfile,
@@ -326,7 +326,16 @@ function BackfillModal({ onClose }) {
 
 // ── Session Detail ────────────────────────────────────────────────
 function SessionDetail({ d, onClose, onRetry, onAssign }) {
+  const navigate = useNavigate()
   const canRetry = ['failed', 'low_quality', 'no_detection', 'skipped'].includes(d.status)
+
+  const toGateLog = () => {
+    if (!d.event_time_vn) return
+    const dateStr = new Date(d.event_time_vn).toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
+    const params = new URLSearchParams({ since: dateStr, until: dateStr })
+    if (d.room_label) params.set('room', d.room_label)
+    navigate(`/gate-log?${params}`)
+  }
 
   return (
     <div className={s.detailPanel}>
@@ -344,6 +353,11 @@ function SessionDetail({ d, onClose, onRetry, onAssign }) {
           <button className={`${s.btnAction} ${s.btnAssign}`} onClick={onAssign}>
             ＋ Gán người
           </button>
+          {d.event_time_vn && (
+            <button className={s.btnSecondary} onClick={toGateLog} title="Xem trong Gate Log">
+              → Gate Log
+            </button>
+          )}
           <button className={s.btnIcon} onClick={onClose}>
             <Icon name="x" size={14} />
           </button>
@@ -966,7 +980,8 @@ const TABS = [
 ]
 
 export default function Enroll() {
-  const [tab,          setTab]      = useState('sessions')
+  const [searchParams] = useSearchParams()
+  const [tab,          setTab]      = useState(searchParams.get('tab') || 'sessions')
   const [summary,      setSummary]  = useState({})
   const [queue,        setQueue]    = useState([])
   const [showBackfill, setBackfill] = useState(false)

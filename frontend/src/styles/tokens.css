@@ -33,6 +33,12 @@
   --r-sm: 5px;
   --r-md: 8px;
   --r-lg: 12px;
+
+  /* Compatibility aliases */
+  --c-surface: var(--bg1);
+  --c-border:  var(--ln);
+  --c-text:    var(--thi);
+  --c-text-2:  var(--tlo);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

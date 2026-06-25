@@ -95,6 +95,22 @@ def list_sessions(
     return [dict(r) for r in rows]
 
 
+# ── Session by unlock_id (gate-log cross-link) ──────────────────
+# Must be BEFORE /sessions/{session_id} so FastAPI doesn't treat "by-unlock" as session_id
+@router.get("/sessions/by-unlock/{unlock_id}")
+def get_session_by_unlock(unlock_id: str, _=Depends(require_auth)):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, status, person_count, persons_enrolled
+                FROM enroll.enroll_sessions
+                WHERE unlock_id = %(uid)s
+                LIMIT 1
+            """, {"uid": unlock_id})
+            row = cur.fetchone()
+    return dict(row) if row else {}
+
+
 # ── Session detail ───────────────────────────────────────────────
 @router.get("/sessions/{session_id}")
 def get_session(session_id: str, _=Depends(require_auth)):

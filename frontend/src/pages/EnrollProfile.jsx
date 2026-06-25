@@ -347,31 +347,49 @@ export default function EnrollProfile() {
             <div className={s.empty}>Chưa có session nào</div>
           ) : (
             <div className={s.timeline}>
-              {p.sessions.map((ses, i) => (
-                <div key={ses.id} className={s.tlItem}>
-                  <div className={s.tlDotCol}>
-                    <div className={`${s.tlDot}
-                      ${ses.status === 'enrolled' ? s.dotGreen
-                        : ses.status === 'low_quality' ? s.dotAmber
-                        : s.dotDim}`} />
-                    {i < p.sessions.length - 1 && <div className={s.tlLine} />}
-                  </div>
-                  <div className={s.tlContent}>
-                    <div className={s.tlHead}>
-                      <span className={s.tlTime}>{fmtDt(ses.event_time_vn)}</span>
-                      <Tag text={ses.status} mod={STATUS_MOD[ses.status]} />
-                      {ses.is_new && <Tag text="first enroll" mod={s.tagBlue} />}
-                      <span className={s.tlQ}>{fmtPct(ses.overall_quality)}</span>
+              {p.sessions.map((ses, i) => {
+                const gateLogHref = (() => {
+                  if (!ses.event_time_vn) return null
+                  const d = new Date(ses.event_time_vn).toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
+                  const params = new URLSearchParams({ since: d, until: d })
+                  if (ses.room_label) params.set('room', ses.room_label)
+                  return `/gate-log?${params}`
+                })()
+                return (
+                  <div key={ses.id} className={s.tlItem}>
+                    <div className={s.tlDotCol}>
+                      <div className={`${s.tlDot}
+                        ${ses.status === 'enrolled' ? s.dotGreen
+                          : ses.status === 'low_quality' ? s.dotAmber
+                          : s.dotDim}`} />
+                      {i < p.sessions.length - 1 && <div className={s.tlLine} />}
                     </div>
-                    <div className={s.tlMeta}>
-                      {ses.room_label && <span>{ses.room_label}</span>}
-                      {ses.merge_sim != null && (
-                        <span>merge sim {ses.merge_sim.toFixed(2)}</span>
-                      )}
+                    <div className={s.tlContent}>
+                      <div className={s.tlHead}>
+                        <span className={s.tlTime}>{fmtDt(ses.event_time_vn)}</span>
+                        <Tag text={ses.status} mod={STATUS_MOD[ses.status]} />
+                        {ses.is_new && <Tag text="first enroll" mod={s.tagBlue} />}
+                        <span className={s.tlQ}>{fmtPct(ses.overall_quality)}</span>
+                        {gateLogHref && (
+                          <button
+                            className={s.tlLink}
+                            onClick={() => navigate(gateLogHref)}
+                            title="Xem trong Gate Log"
+                          >
+                            → Gate Log
+                          </button>
+                        )}
+                      </div>
+                      <div className={s.tlMeta}>
+                        {ses.room_label && <span>{ses.room_label}</span>}
+                        {ses.merge_sim != null && (
+                          <span>merge sim {ses.merge_sim.toFixed(2)}</span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
