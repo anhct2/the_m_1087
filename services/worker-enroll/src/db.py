@@ -51,7 +51,8 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
 def get_gate_clips(door_id: str, unlock_id: str) -> List[dict]:
     """
     Clips từ gate_session_clips cho 1 gate event.
-    Sort: N1 trước, S1, S2 sau — đúng priority
+    Join trực tiếp qua unlock_id (BIGINT) — tránh join view gate_sessions phức tạp.
+    Sort: N1 trước, S1, S2 sau — đúng priority.
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -60,13 +61,10 @@ def get_gate_clips(door_id: str, unlock_id: str) -> List[dict]:
                     gsc.id, gsc.camera,
                     gsc.frigate_event_id,
                     gsc.clip_url, gsc.snapshot_url,
+                    gsc.clip_finalized,
                     gsc.frigate_score, gsc.event_time_vn
                 FROM gate_session_clips gsc
-                JOIN gate_sessions gs
-                    ON  gs.event_time_vn = gsc.event_time_vn
-                    AND gs.direction     = gsc.direction
-                WHERE gs.door_id::text   = %(did)s
-                  AND gs.unlock_id::text = %(uid)s
+                WHERE gsc.unlock_id = %(uid)s::bigint
                   AND gsc.direction = 'incoming'
                 ORDER BY
                     CASE gsc.camera
@@ -76,7 +74,7 @@ def get_gate_clips(door_id: str, unlock_id: str) -> List[dict]:
                         ELSE 9
                     END,
                     COALESCE(gsc.frigate_score, 0) DESC
-            """, {"did": door_id, "uid": unlock_id})
+            """, {"uid": unlock_id})
             return [dict(r) for r in cur.fetchall()]
 
 
@@ -156,10 +154,10 @@ def skip_job(job_id: int, reason: str) -> None:
         conn.commit()
 
 
-def release_stuck() -> int:
+def release_stuck(timeout_min: int = 30) -> int:
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT enroll.release_stuck(30) AS n")
+            cur.execute("SELECT enroll.release_stuck(%s) AS n", (timeout_min,))
             conn.commit()
             return cur.fetchone()["n"] or 0
 

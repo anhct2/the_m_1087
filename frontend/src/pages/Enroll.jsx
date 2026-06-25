@@ -326,7 +326,7 @@ function BackfillModal({ onClose }) {
 
 // ── Session Detail ────────────────────────────────────────────────
 function SessionDetail({ d, onClose, onRetry, onAssign }) {
-  const canRetry = ['failed', 'low_quality', 'no_detection'].includes(d.status)
+  const canRetry = ['failed', 'low_quality', 'no_detection', 'skipped'].includes(d.status)
 
   return (
     <div className={s.detailPanel}>
@@ -513,7 +513,7 @@ function SessionsTab() {
         <select className={s.filterSelect}
           value={statusF} onChange={e => setStatusF(e.target.value)}>
           <option value="">Tất cả trạng thái</option>
-          {['enrolled','low_quality','no_detection','failed','processing'].map(v => (
+          {['enrolled','low_quality','no_detection','failed','processing','skipped'].map(v => (
             <option key={v} value={v}>{v}</option>
           ))}
         </select>
@@ -583,7 +583,7 @@ function SessionsTab() {
                 <td className={`${s.tdMuted} ${s.tdRight}`}>{fmtMs(r.total_ms)}</td>
                 <td onClick={e => e.stopPropagation()}>
                   <div className={s.actionCell}>
-                    {['failed','low_quality','no_detection'].includes(r.status) && (
+                    {['failed','low_quality','no_detection','skipped'].includes(r.status) && (
                       <button className={`${s.btnAction} ${s.btnRetry}`}
                         title="Retry"
                         onClick={async (e) => {
@@ -898,11 +898,23 @@ function JobsTab({ onRefreshStats }) {
       <div className={s.tableWrap}>
         <table className={s.table}>
           <thead>
-            <tr>{['#','Phòng','Thời gian','Trạng thái','Lần thử','Worker','Lỗi',''].map(h => <th key={h}>{h}</th>)}</tr>
+            <tr>
+              <th>#</th>
+              <th>Phòng</th>
+              <th>Sự kiện</th>
+              <th>Trạng thái</th>
+              <th className={s.tdCenter}>Lần thử</th>
+              <th>Scheduled</th>
+              <th>Started</th>
+              <th>Finished</th>
+              <th>Worker</th>
+              <th>Lỗi</th>
+              <th style={{ width: 60 }}></th>
+            </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={8} className={s.tdCenter}><Spinner /></td></tr>}
-            {!loading && rows.length === 0 && <tr><td colSpan={8} className={s.tdCenter}><Empty /></td></tr>}
+            {loading && <tr><td colSpan={11} className={s.tdCenter}><Spinner /></td></tr>}
+            {!loading && rows.length === 0 && <tr><td colSpan={11} className={s.tdCenter}><Empty /></td></tr>}
             {!loading && rows.map(r => (
               <tr key={r.id}
                 className={`${s.tableRow} ${ROW_CLS[r.status] || ''}`}>
@@ -910,8 +922,15 @@ function JobsTab({ onRefreshStats }) {
                 <td><span className={`${s.badge} ${s.stTeal}`}>{r.room_label}</span></td>
                 <td className={s.tdTime}>{fmtDt(r.event_time_vn)}</td>
                 <td><StatusBadge status={r.status} /></td>
-                <td className={s.tdCenter}>{r.attempt_count}/{r.max_attempts}</td>
-                <td className={s.tdMuted}>{r.locked_by || '—'}</td>
+                <td className={s.tdCenter}>
+                  <span className={r.attempt_count >= r.max_attempts ? s.countGray : ''}>
+                    {r.attempt_count}/{r.max_attempts}
+                  </span>
+                </td>
+                <td className={s.tdTime}>{fmtDt(r.scheduled_at)}</td>
+                <td className={s.tdTime}>{r.started_at ? fmtDt(r.started_at) : <span className={s.tdMuted}>—</span>}</td>
+                <td className={s.tdTime}>{r.finished_at ? fmtDt(r.finished_at) : <span className={s.tdMuted}>—</span>}</td>
+                <td className={s.tdMuted} style={{ maxWidth: 110 }}>{r.locked_by || '—'}</td>
                 <td className={s.tdError}>{r.last_error || '—'}</td>
                 <td>
                   <div className={s.actionCell}>
