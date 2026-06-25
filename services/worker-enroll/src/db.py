@@ -269,6 +269,17 @@ def find_similar_profile(face_emb: List[float], room_label: str,
             return None
 
 
+def _weighted_avg_emb(old_raw, count: int, new_emb: List[float]) -> List[float]:
+    import numpy as np
+    if old_raw is None:
+        return new_emb
+    if isinstance(old_raw, str):
+        old = np.array([float(x) for x in old_raw.strip()[1:-1].split(",")], dtype=np.float32)
+    else:
+        old = np.array(old_raw, dtype=np.float32)
+    return ((old * count + np.array(new_emb, dtype=np.float32)) / (count + 1)).tolist()
+
+
 def upsert_profile(sid: str, room_label: str,
                    face_emb: Optional[List[float]], face_quality: Optional[float],
                    face_src_cam: Optional[str], face_frame_cnt: int,
@@ -280,13 +291,22 @@ def upsert_profile(sid: str, room_label: str,
     with get_conn() as conn:
         with conn.cursor() as cur:
             if existing_id:
+                # Compute weighted average in Python — pgvector scalar multiply not supported
+                merged_emb = None
+                if face_emb is not None:
+                    cur.execute(
+                        "SELECT face_embedding, enroll_count FROM enroll.person_profiles WHERE id=%s",
+                        (existing_id,)
+                    )
+                    prof = cur.fetchone()
+                    if prof:
+                        merged_emb = _weighted_avg_emb(prof["face_embedding"], prof["enroll_count"], face_emb)
+                    else:
+                        merged_emb = face_emb
+
                 cur.execute("""
                     UPDATE enroll.person_profiles SET
-                        face_embedding = CASE
-                            WHEN %(fe)s IS NOT NULL AND face_embedding IS NOT NULL
-                            THEN (face_embedding*enroll_count::float8 + %(fe)s::vector)/(enroll_count+1)::float8
-                            WHEN %(fe)s IS NOT NULL THEN %(fe)s::vector
-                            ELSE face_embedding END,
+                        face_embedding   = COALESCE(%(fe)s::vector, face_embedding),
                         face_quality     = GREATEST(COALESCE(face_quality,0),COALESCE(%(fq)s,0)),
                         face_source_cam  = COALESCE(%(fsc)s, face_source_cam),
                         face_frame_count = face_frame_count + %(ffc)s,
@@ -299,7 +319,7 @@ def upsert_profile(sid: str, room_label: str,
                         enroll_count     = enroll_count + 1,
                         last_seen_ts     = now(), updated_at = now()
                     WHERE id = %(pid)s
-                """, dict(fe=face_emb, fq=face_quality, fsc=face_src_cam,
+                """, dict(fe=merged_emb, fq=face_quality, fsc=face_src_cam,
                           ffc=face_frame_cnt, age=age, gen=gender,
                           cu=color_upper, cl=color_lower, br=body_ratio,
                           an=appearance_notes, pid=existing_id))
