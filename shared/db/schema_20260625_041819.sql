@@ -1,5 +1,5 @@
 -- DB Schema Dump: m1087
--- Generated   : 2026-06-25 04:18:20
+-- Generated   : 2026-06-25 11:11:30
 -- Schemas     : public, enroll
 -- NOTE: DDL only — no data
 
@@ -48,7 +48,7 @@ CREATE TABLE "public"."gate_events" (
     "inserted_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 1,214
+-- rows: 1,269
 
 -- public.gate_session_clips
 CREATE TABLE "public"."gate_session_clips" (
@@ -81,7 +81,7 @@ CREATE TABLE "public"."gate_session_clips" (
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT now(),
     PRIMARY KEY ("id")
 );
--- rows: 2,564
+-- rows: 2,727
 
 -- public.mapping_runs
 CREATE TABLE "public"."mapping_runs" (
@@ -95,7 +95,7 @@ CREATE TABLE "public"."mapping_runs" (
     "notes" TEXT,
     PRIMARY KEY ("id")
 );
--- rows: 1,749
+-- rows: 1,832
 
 -- public.poll_state
 CREATE TABLE "public"."poll_state" (
@@ -138,7 +138,7 @@ CREATE TABLE "public"."scrape_runs" (
     "tomorrow_available" BOOLEAN,
     PRIMARY KEY ("id")
 );
--- rows: 12
+-- rows: 13
 
 -- public.unlock_map
 CREATE TABLE "public"."unlock_map" (
@@ -252,7 +252,7 @@ CREATE TABLE "enroll"."person_profiles" (
     "is_active" BOOLEAN DEFAULT true NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 124
+-- rows: 128
 
 -- enroll.person_session_map
 CREATE TABLE "enroll"."person_session_map" (
@@ -263,7 +263,7 @@ CREATE TABLE "enroll"."person_session_map" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("person_id", "enroll_session_id")
 );
--- rows: 124
+-- rows: 127
 
 -- enroll.room_stays
 CREATE TABLE "enroll"."room_stays" (
@@ -281,7 +281,7 @@ CREATE TABLE "enroll"."room_stays" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 124
+-- rows: 128
 
 -- ============================================================
 --  VIEWS — schema: public
@@ -1524,4 +1524,4 @@ CREATE OR REPLACE FUNCTION public.vector_typmod_in(cstring[])
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$vector_typmod_in$function$;
 
--- End of dump — 2026-06-25 04:18:20
+-- End of dump — 2026-06-25 11:11:30
