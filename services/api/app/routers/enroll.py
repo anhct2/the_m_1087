@@ -376,7 +376,7 @@ def backfill(body: dict, _=Depends(require_auth)):
     """
     days      = int(body.get("days", 7))
     room      = body.get("room", "").strip() or None
-    direction = body.get("direction", "incoming")
+    direction = body.get("direction", "incoming").strip().lower()
 
     params: dict = {"days": str(days)}
     if room:
@@ -458,7 +458,15 @@ def backfill(body: dict, _=Depends(require_auth)):
                         (door_id, unlock_id, event_time_vn, room_label, direction,
                          status, scheduled_at)
                     VALUES (%(d)s, %(u)s, %(t)s, %(r)s, %(dir)s, 'pending', now())
-                    ON CONFLICT (door_id, unlock_id, direction) DO NOTHING
+                    ON CONFLICT (door_id, unlock_id, direction) DO UPDATE
+                        SET status        = 'pending',
+                            attempt_count = 0,
+                            scheduled_at  = now(),
+                            last_error    = NULL,
+                            locked_by     = NULL,
+                            locked_at     = NULL,
+                            started_at    = NULL,
+                            finished_at   = NULL
                 """, {"d": str(r["door_id"]), "u": str(r["unlock_id"]),
                       "t": r["event_time_vn"], "r": r["room_label"], "dir": direction})
                 if cur.rowcount:
@@ -694,10 +702,10 @@ def re_enroll_profile(person_id: str, _=Depends(require_auth)):
                 cur.execute("""
                     INSERT INTO enroll.job_queue
                         (door_id, unlock_id, event_time_vn, room_label,
-                         status, scheduled_at, max_attempts)
-                    VALUES (%(d)s,%(u)s,%(t)s,%(r)s,'pending',now(),3)
-                    ON CONFLICT (door_id, unlock_id) DO UPDATE
-                        SET status       = 'pending',
+                         direction, status, scheduled_at, max_attempts)
+                    VALUES (%(d)s,%(u)s,%(t)s,%(r)s,'incoming','pending',now(),3)
+                    ON CONFLICT (door_id, unlock_id, direction) DO UPDATE
+                        SET status        = 'pending',
                             attempt_count = 0,
                             scheduled_at  = now(),
                             last_error    = NULL,
