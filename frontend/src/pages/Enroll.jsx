@@ -308,15 +308,17 @@ function AssignModal({ session, onClose, onDone }) {
 
 // ── Backfill Modal ────────────────────────────────────────────────
 function BackfillModal({ onClose }) {
-  const [days,    setDays]    = useState(7)
-  const [room,    setRoom]    = useState('')
-  const [loading, setLoading] = useState(false)
-  const [result,  setResult]  = useState(null)
+  const [days,      setDays]      = useState(7)
+  const [room,      setRoom]      = useState('')
+  const [direction, setDirection] = useState('incoming')
+  const [loading,   setLoading]   = useState(false)
+  const [result,    setResult]    = useState(null)
 
   const run = async () => {
     setLoading(true)
+    setResult(null)
     try {
-      const { data } = await postBackfill({ days, room: room || undefined })
+      const { data } = await postBackfill({ days, room: room || undefined, direction })
       setResult(data)
     } finally { setLoading(false) }
   }
@@ -328,6 +330,13 @@ function BackfillModal({ onClose }) {
           <span className={s.modalTitle}>Backfill enroll jobs</span>
           <button className={s.btnIcon} onClick={onClose}><Icon name="x" size={14}/></button>
         </div>
+        <label className={s.formLabel}>Hướng</label>
+        <div className={s.fgroup} style={{ marginBottom: 8 }}>
+          <button className={direction === 'incoming' ? s.fbtnOn : s.fbtn}
+            onClick={() => setDirection('incoming')}>↓ Vào (Incoming)</button>
+          <button className={direction === 'outgoing' ? s.fbtnOn : s.fbtn}
+            onClick={() => setDirection('outgoing')}>↑ Ra (Outgoing)</button>
+        </div>
         <label className={s.formLabel}>Số ngày nhìn lại</label>
         <input type="number" className={s.searchInput}
           value={days} onChange={e => setDays(+e.target.value)} min={1} max={90} />
@@ -336,7 +345,7 @@ function BackfillModal({ onClose }) {
           value={room} onChange={e => setRoom(e.target.value)} />
         {result && (
           <div className={s.resultBox}>
-            Đã enqueue <strong>{result.enqueued}</strong> / {result.total_found} events
+            Đã enqueue <strong>{result.enqueued}</strong> / {result.total_found} events ({result.direction})
           </div>
         )}
         <div className={s.modalActions}>
