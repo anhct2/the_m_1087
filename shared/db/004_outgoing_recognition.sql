@@ -57,7 +57,7 @@ SELECT
      LIMIT 1) AS recognized_face_event_id
 FROM enroll.enroll_sessions es
 LEFT JOIN gate_sessions gs
-    ON gs.door_id = es.door_id AND gs.unlock_id = es.unlock_id
+    ON gs.door_id = es.door_id AND gs.unlock_id::text = es.unlock_id
 LEFT JOIN enroll.person_profiles pp
     ON pp.id = es.recognized_person_id;
 
