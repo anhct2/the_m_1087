@@ -50,25 +50,32 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
             """, {"m": str(since_min)})
             incoming = [dict(r) for r in cur.fetchall()]
 
-            # Outgoing: bất kỳ method, label P.%
+            # Outgoing: dùng gate_sessions (door_opens không có unlock).
+            # unlock_id = NULL trên VPS → dùng door_id làm unlock_id key.
+            # Chỉ enqueue khi có clip tương ứng trong gate_session_clips.
             cur.execute("""
-                SELECT DISTINCT ON (session_id, unlock_id)
-                    session_id::text AS door_id,
-                    unlock_id::text  AS unlock_id,
-                    event_time_vn,
-                    label            AS room_label,
-                    'outgoing'::text AS direction
-                FROM gate_session_clips gsc
-                WHERE gsc.direction  = 'outgoing'
-                  AND gsc.label      LIKE 'P.%%'
-                  AND gsc.event_time_vn >= now() - (%(m)s || ' minutes')::interval
+                SELECT DISTINCT ON (gs.door_id)
+                    gs.door_id::text  AS door_id,
+                    gs.door_id::text  AS unlock_id,
+                    gs.event_time_vn,
+                    gsc_label.label   AS room_label,
+                    'outgoing'::text  AS direction
+                FROM gate_sessions gs
+                JOIN LATERAL (
+                    SELECT gsc.label
+                    FROM gate_session_clips gsc
+                    WHERE gsc.session_id = gs.door_id
+                      AND gsc.label LIKE 'P.%%'
+                    LIMIT 1
+                ) gsc_label ON true
+                WHERE gs.direction = 'outgoing'
+                  AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gsc.session_id::text
-                        AND jq.unlock_id = gsc.unlock_id::text
+                      WHERE jq.door_id   = gs.door_id::text
                         AND jq.direction = 'outgoing'
                   )
-                ORDER BY session_id, unlock_id, event_time_vn DESC
+                ORDER BY gs.door_id, gs.event_time_vn DESC
             """, {"m": str(since_min)})
             outgoing = [dict(r) for r in cur.fetchall()]
 
@@ -77,22 +84,39 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
 
 def get_gate_clips(door_id: str, unlock_id: str,
                    direction: str = 'incoming') -> List[dict]:
-    """Clips từ gate_session_clips cho 1 gate event, lọc theo direction."""
+    """Clips từ gate_session_clips cho 1 gate event, lọc theo direction.
+
+    Outgoing: dùng session_id = door_id (vì outgoing clips có unlock_id = NULL).
+    Incoming: dùng unlock_id bình thường.
+    """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    gsc.id, gsc.camera,
-                    gsc.frigate_event_id,
-                    gsc.clip_url, gsc.snapshot_url,
-                    gsc.clip_finalized,
-                    gsc.frigate_score, gsc.event_time_vn
-                FROM gate_session_clips gsc
-                WHERE gsc.unlock_id = %(uid)s::bigint
-                  AND gsc.direction = %(dir)s
-                ORDER BY
-                    COALESCE(gsc.frigate_score, 0) DESC
-            """, {"uid": unlock_id, "dir": direction})
+            if direction == 'outgoing':
+                cur.execute("""
+                    SELECT
+                        gsc.id, gsc.camera,
+                        gsc.frigate_event_id,
+                        gsc.clip_url, gsc.snapshot_url,
+                        gsc.clip_finalized,
+                        gsc.frigate_score, gsc.event_time_vn
+                    FROM gate_session_clips gsc
+                    WHERE gsc.session_id = %(did)s::bigint
+                      AND gsc.direction  = 'outgoing'
+                    ORDER BY COALESCE(gsc.frigate_score, 0) DESC
+                """, {"did": door_id})
+            else:
+                cur.execute("""
+                    SELECT
+                        gsc.id, gsc.camera,
+                        gsc.frigate_event_id,
+                        gsc.clip_url, gsc.snapshot_url,
+                        gsc.clip_finalized,
+                        gsc.frigate_score, gsc.event_time_vn
+                    FROM gate_session_clips gsc
+                    WHERE gsc.unlock_id = %(uid)s::bigint
+                      AND gsc.direction = %(dir)s
+                    ORDER BY COALESCE(gsc.frigate_score, 0) DESC
+                """, {"uid": unlock_id, "dir": direction})
             return [dict(r) for r in cur.fetchall()]
 
 
