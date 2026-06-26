@@ -5,6 +5,7 @@ import {
   getEnrollSession, getEnrollProfiles, patchEnrollProfile,
   getOccupancy, getEnrollJobs, postBackfill, cancelJob, retryJob,
   retrySession, postReleaseStuck, getWorkerStatus, assignSession, searchProfiles,
+  getEnrollByUnlockAll,
 } from '../api/client'
 import { Icon, Spinner, Empty, Lightbox } from '../components/UI'
 import s from './Enroll.module.css'
@@ -28,6 +29,23 @@ const STATUS_META = {
   done:         { icon: '✓', label: 'done',         cls: s.stEnrolled },
   pending:      { icon: '○', label: 'pending',      cls: s.stNone },
   skipped:      { icon: '–', label: 'skipped',      cls: s.stNone },
+}
+
+// Hiển thị kết quả nhận diện outgoing
+function RecognizedPersonCard({ name, room, gender, sim, faceEventId, size = 32 }) {
+  const src = faceEventId ? `/api/media/snapshot/${faceEventId}` : null
+  return (
+    <div className={s.recognizedCard}>
+      <FaceAvatar gender={gender} confidence="gate_code" eventId={faceEventId} size={size} noLightbox />
+      <div className={s.recognizedInfo}>
+        <div className={s.recognizedName}>{name || 'Unknown'}</div>
+        {room && <div className={s.recognizedRoom}>{room}</div>}
+        {sim != null && (
+          <div className={s.recognizedSim}>{(sim * 100).toFixed(0)}% match</div>
+        )}
+      </div>
+    </div>
+  )
 }
 const ROW_CLS = {
   enrolled:   s.rowEnrolled,
@@ -378,9 +396,45 @@ function SessionDetail({ d, onClose, onRetry, onAssign }) {
         <span>Dừng ở: <strong>{d.stopped_at_cam || 'hết cam'}</strong></span>
         <span>Nguồn: <strong>{d.used_video ? '📹 video' : '📷 snapshot'}</strong></span>
         <span>Thời gian xử lý: <strong>{fmtMs(d.total_ms)}</strong></span>
-        {d.direction && <span>Hướng: <strong style={{ color: d.direction === 'IN' ? '#60a5fa' : '#a855f7' }}>{d.direction}</strong></span>}
+        {d.direction && (
+          <span>Hướng: <strong style={{ color: d.direction === 'incoming' ? '#60a5fa' : '#a855f7' }}>
+            {d.direction === 'incoming' ? '↓ Vào' : '↑ Ra'}
+          </strong></span>
+        )}
         {d.user_name  && <span>User: <strong>{d.user_name}</strong></span>}
       </div>
+
+      {d.direction === 'outgoing' && (
+        <div className={s.section}>
+          <div className={s.sectionLabel}>Kết quả nhận diện</div>
+          {d.recognized_person_id ? (
+            <div className={s.recognizedBig}>
+              <RecognizedPersonCard
+                name={d.recognized_name}
+                room={d.recognized_room}
+                gender={d.recognized_gender}
+                sim={d.recognition_sim}
+                faceEventId={d.recognized_face_event_id}
+                size={56}
+              />
+              <div className={s.recognizedMeta}>
+                <span className={`${s.badge} ${s.stEnrolled}`}>✓ Đã nhận diện</span>
+                {d.recognition_sim != null && (
+                  <span className={`${s.badge} ${s.stTeal}`}>{(d.recognition_sim * 100).toFixed(0)}% similarity</span>
+                )}
+                <div className={s.recognizedNote}>Room_stay đã được đóng tại thời điểm ra</div>
+              </div>
+            </div>
+          ) : (
+            <div className={s.recognizedEmpty}>
+              <span className={s.countGray}>Không nhận diện được người</span>
+              <button className={`${s.btnAction} ${s.btnAssign}`} style={{ marginLeft: 8 }} onClick={onAssign}>
+                ＋ Gán thủ công
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {d.error_msg && (
         <div className={s.errorBox}>⚠ {d.error_msg}</div>
@@ -439,7 +493,7 @@ function SessionDetail({ d, onClose, onRetry, onAssign }) {
         </div>
       )}
 
-      {d.persons?.length > 0 && (
+      {d.direction !== 'outgoing' && d.persons?.length > 0 && (
         <div className={s.section}>
           <div className={s.sectionLabel}>Người được enroll</div>
           <div className={s.personGrid}>
@@ -482,6 +536,7 @@ function SessionsTab() {
   const [loading,   setLoading] = useState(true)
   const [roomF,     setRoomF]   = useState('')
   const [statusF,   setStatusF] = useState('')
+  const [dirF,      setDirF]    = useState('')
   const [selected,  setSel]     = useState(null)
   const [detail,    setDetail]  = useState(null)
   const [detailL,   setDL]      = useState(false)
@@ -493,12 +548,13 @@ function SessionsTab() {
     setLoading(true)
     try {
       const params = {}
-      if (roomF)   params.room   = roomF
-      if (statusF) params.status = statusF
+      if (roomF)   params.room      = roomF
+      if (statusF) params.status    = statusF
+      if (dirF)    params.direction = dirF
       const { data } = await getEnrollSessions(params)
       setRows(data)
     } finally { setLoading(false) }
-  }, [roomF, statusF])
+  }, [roomF, statusF, dirF])
 
   useEffect(() => { load() }, [load])
 
@@ -568,6 +624,12 @@ function SessionsTab() {
             <option key={v} value={v}>{v}</option>
           ))}
         </select>
+        <div className={s.fgroup}>
+          {[['','Tất cả'],['incoming','↓ Vào'],['outgoing','↑ Ra']].map(([k,l]) => (
+            <button key={k} className={`${s.fbtn} ${dirF===k?s.fbtnOn:''}`}
+              onClick={() => setDirF(k)}>{l}</button>
+          ))}
+        </div>
         <button className={s.btnSecondary} onClick={load}>
           <Icon name="refresh" size={13} /> Làm mới
         </button>
@@ -602,8 +664,8 @@ function SessionsTab() {
               <th>Thời gian</th>
               <th>Phòng</th>
               <th>Trạng thái</th>
-              <th>Dir</th>
-              <th className={s.tdCenter}>Người</th>
+              <th>Chiều</th>
+              <th>Người / Nhận diện</th>
               <th>Quality</th>
               <th>Camera</th>
               <th className={s.tdRight}>ms</th>
@@ -642,18 +704,35 @@ function SessionsTab() {
                     {stuck && <span className={s.stuckTag}>kẹt</span>}
                   </td>
                   <td>
-                    {r.direction && (
-                      <span className={r.direction === 'IN' ? s.dirIn : s.dirOut}>
-                        {r.direction}
-                      </span>
-                    )}
-                  </td>
-                  <td className={s.tdCenter}>
-                    <span className={r.persons_enrolled > 0 ? s.countGreen : s.countGray}>
-                      {r.persons_enrolled}
+                    <span className={r.direction === 'incoming' ? s.dirIn : s.dirOut}>
+                      {r.direction === 'incoming' ? '↓ Vào' : '↑ Ra'}
                     </span>
-                    <span className={s.countSep}>/</span>
-                    {r.person_count}
+                  </td>
+                  <td>
+                    {r.direction === 'outgoing' ? (
+                      r.recognized_name ? (
+                        <RecognizedPersonCard
+                          name={r.recognized_name}
+                          room={r.recognized_room}
+                          gender={r.recognized_gender}
+                          sim={r.recognition_sim}
+                          faceEventId={r.recognized_face_event_id}
+                          size={28}
+                        />
+                      ) : (
+                        <span className={s.countGray} style={{ fontSize: 11 }}>
+                          {r.status === 'enrolled' ? 'Nhận diện được' : 'Chưa nhận diện'}
+                        </span>
+                      )
+                    ) : (
+                      <div className={s.tdCenter}>
+                        <span className={r.persons_enrolled > 0 ? s.countGreen : s.countGray}>
+                          {r.persons_enrolled}
+                        </span>
+                        <span className={s.countSep}>/</span>
+                        {r.person_count}
+                      </div>
+                    )}
                   </td>
                   <td className={s.tdWide}><ScoreBar value={r.overall_quality} /></td>
                   <td className={s.tdMuted}>{r.stopped_at_cam || '—'}</td>

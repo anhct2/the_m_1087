@@ -28,32 +28,56 @@ def get_conn():
 # ── Gate data (READ ONLY) ────────────────────────────────────
 
 def poll_new_gate_events(since_min: int = 15) -> List[dict]:
-    """Lấy gate events mới chưa có job trong job_queue"""
+    """Lấy gate events mới chưa có job: incoming (password) + outgoing (any method)"""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Incoming: phải là password method
             cur.execute("""
-                SELECT gs.door_id, gs.unlock_id,
-                       gs.event_time_vn, gs.label AS room_label
+                SELECT gs.door_id, gs.unlock_id, gs.event_time_vn,
+                       gs.label AS room_label, 'incoming'::text AS direction
                 FROM gate_sessions gs
                 WHERE gs.method      = 'password'
                   AND gs.label       LIKE 'P.%%'
+                  AND gs.direction   = 'incoming'
                   AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gs.door_id::text
-                        AND jq.unlock_id = gs.unlock_id::text
+                      WHERE jq.door_id   = gs.door_id
+                        AND jq.unlock_id = gs.unlock_id
+                        AND jq.direction = 'incoming'
                   )
                 ORDER BY gs.event_time_vn DESC
             """, {"m": str(since_min)})
-            return [dict(r) for r in cur.fetchall()]
+            incoming = [dict(r) for r in cur.fetchall()]
+
+            # Outgoing: bất kỳ method, label P.%
+            cur.execute("""
+                SELECT DISTINCT ON (session_id, unlock_id)
+                    session_id::text AS door_id,
+                    unlock_id::text  AS unlock_id,
+                    event_time_vn,
+                    label            AS room_label,
+                    'outgoing'::text AS direction
+                FROM gate_session_clips gsc
+                WHERE gsc.direction  = 'outgoing'
+                  AND gsc.label      LIKE 'P.%%'
+                  AND gsc.event_time_vn >= now() - (%(m)s || ' minutes')::interval
+                  AND NOT EXISTS (
+                      SELECT 1 FROM enroll.job_queue jq
+                      WHERE jq.door_id   = gsc.session_id::text
+                        AND jq.unlock_id = gsc.unlock_id::text
+                        AND jq.direction = 'outgoing'
+                  )
+                ORDER BY session_id, unlock_id, event_time_vn DESC
+            """, {"m": str(since_min)})
+            outgoing = [dict(r) for r in cur.fetchall()]
+
+            return incoming + outgoing
 
 
-def get_gate_clips(door_id: str, unlock_id: str) -> List[dict]:
-    """
-    Clips từ gate_session_clips cho 1 gate event.
-    Join trực tiếp qua unlock_id (BIGINT) — tránh join view gate_sessions phức tạp.
-    Sort: N1 trước, S1, S2 sau — đúng priority.
-    """
+def get_gate_clips(door_id: str, unlock_id: str,
+                   direction: str = 'incoming') -> List[dict]:
+    """Clips từ gate_session_clips cho 1 gate event, lọc theo direction."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -65,35 +89,29 @@ def get_gate_clips(door_id: str, unlock_id: str) -> List[dict]:
                     gsc.frigate_score, gsc.event_time_vn
                 FROM gate_session_clips gsc
                 WHERE gsc.unlock_id = %(uid)s::bigint
-                  AND gsc.direction = 'incoming'
+                  AND gsc.direction = %(dir)s
                 ORDER BY
-                    CASE gsc.camera
-                        WHEN 'N1' THEN 1
-                        WHEN 'S1' THEN 2
-                        WHEN 'S2' THEN 3
-                        ELSE 9
-                    END,
                     COALESCE(gsc.frigate_score, 0) DESC
-            """, {"uid": unlock_id})
+            """, {"uid": unlock_id, "dir": direction})
             return [dict(r) for r in cur.fetchall()]
 
 
 # ── Job queue ────────────────────────────────────────────────
 
 def enqueue(door_id: str, unlock_id: str, event_time_vn, room_label: str,
-            delay_s: int) -> Optional[int]:
+            delay_s: int, direction: str = 'incoming') -> Optional[int]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO enroll.job_queue
-                    (door_id, unlock_id, event_time_vn, room_label,
+                    (door_id, unlock_id, event_time_vn, room_label, direction,
                      status, scheduled_at)
-                VALUES (%(d)s,%(u)s,%(t)s,%(r)s,'pending',
+                VALUES (%(d)s,%(u)s,%(t)s,%(r)s,%(dir)s,'pending',
                         now()+(%(ds)s||' seconds')::interval)
-                ON CONFLICT (door_id, unlock_id) DO NOTHING
+                ON CONFLICT (door_id, unlock_id, direction) DO NOTHING
                 RETURNING id
             """, {"d": door_id, "u": unlock_id, "t": event_time_vn,
-                  "r": room_label, "ds": str(delay_s)})
+                  "r": room_label, "dir": direction, "ds": str(delay_s)})
             conn.commit()
             row = cur.fetchone()
             return row["id"] if row else None
@@ -192,35 +210,36 @@ def release_stuck(timeout_min: int = 30) -> int:
 # ── Enroll writes ────────────────────────────────────────────
 
 def create_session(job_id: int, door_id: str, unlock_id: str,
-                   event_time_vn, room_label: str) -> str:
+                   event_time_vn, room_label: str,
+                   direction: str = 'incoming') -> str:
     sid = str(uuid.uuid4())
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # On retry: keep existing id (FK from camera_clip_results), reset all result fields
             cur.execute("""
                 INSERT INTO enroll.enroll_sessions
-                    (id,job_id,door_id,unlock_id,event_time_vn,room_label,status)
-                VALUES (%(sid)s,%(jid)s,%(d)s,%(u)s,%(t)s,%(r)s,'processing')
-                ON CONFLICT (door_id, unlock_id) DO UPDATE SET
-                    job_id           = EXCLUDED.job_id,
-                    status           = 'processing',
-                    person_count     = 0,
-                    persons_enrolled = 0,
-                    overall_quality  = NULL,
-                    best_face_score  = NULL,
-                    stopped_at_cam   = NULL,
-                    used_video       = false,
-                    fetch_ms         = NULL,
-                    extract_ms       = NULL,
-                    total_ms         = NULL,
-                    error_msg        = NULL,
-                    warnings         = NULL,
-                    finished_at      = NULL
+                    (id,job_id,door_id,unlock_id,event_time_vn,room_label,status,direction)
+                VALUES (%(sid)s,%(jid)s,%(d)s,%(u)s,%(t)s,%(r)s,'processing',%(dir)s)
+                ON CONFLICT (door_id, unlock_id, direction) DO UPDATE SET
+                    job_id               = EXCLUDED.job_id,
+                    status               = 'processing',
+                    person_count         = 0,
+                    persons_enrolled     = 0,
+                    overall_quality      = NULL,
+                    best_face_score      = NULL,
+                    stopped_at_cam       = NULL,
+                    used_video           = false,
+                    fetch_ms             = NULL,
+                    extract_ms           = NULL,
+                    total_ms             = NULL,
+                    error_msg            = NULL,
+                    warnings             = NULL,
+                    finished_at          = NULL,
+                    recognized_person_id = NULL,
+                    recognition_sim      = NULL
                 RETURNING id
             """, {"sid": sid, "jid": job_id, "d": door_id,
-                  "u": unlock_id, "t": event_time_vn, "r": room_label})
+                  "u": unlock_id, "t": event_time_vn, "r": room_label, "dir": direction})
             actual_sid = cur.fetchone()["id"]
-            # Clean up previous attempt's results so retry starts fresh
             cur.execute(
                 "DELETE FROM enroll.camera_clip_results WHERE enroll_session_id = %s",
                 (actual_sid,))
@@ -236,6 +255,7 @@ def update_session(sid: str, **kw) -> None:
         "status","person_count","persons_enrolled","overall_quality",
         "best_face_score","stopped_at_cam","used_video",
         "fetch_ms","extract_ms","total_ms","error_msg","warnings",
+        "recognized_person_id","recognition_sim",
     }
     fields = {k: v for k, v in kw.items() if k in allowed}
     if not fields:
@@ -274,6 +294,38 @@ def save_clip_result(sid: str, camera_id: str, camera_order: int,
                       conf=confidence, fs=face_score, cs=color_score,
                       stop=stopped_here, mp=multi_person, occ=occlusion))
         conn.commit()
+
+
+def find_best_profile_match(face_emb: List[float],
+                            threshold: float = 0.55) -> Optional[Tuple[str, float]]:
+    """Tìm profile tốt nhất trong TOÀN BỘ profiles (dùng cho outgoing recognition)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
+                FROM enroll.person_profiles
+                WHERE face_embedding IS NOT NULL AND is_active = true
+                ORDER BY face_embedding<=>%(emb)s::vector
+                LIMIT 1
+            """, {"emb": face_emb})
+            row = cur.fetchone()
+            if row and row["sim"] >= threshold:
+                return row["id"], float(row["sim"])
+            return None
+
+
+def close_room_stay(person_id: str, exit_ts,
+                    exit_door_id: str = None, exit_unlock_id: str = None) -> int:
+    """Đóng room_stay (ghi exit_ts) khi nhận diện người rời phòng."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT enroll.close_room_stay(%s, %s, %s, %s, 'camera_chain') AS n",
+                (person_id, exit_ts, exit_door_id, exit_unlock_id),
+            )
+            conn.commit()
+            row = cur.fetchone()
+            return int(row["n"]) if row else 0
 
 
 def find_similar_profile(face_emb: List[float], room_label: str,

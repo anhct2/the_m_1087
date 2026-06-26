@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { getSessions, getSessionClips, getEnrollByUnlock } from '../api/client'
+import { getSessions, getSessionClips, getEnrollByUnlockAll } from '../api/client'
 import { Icon, DirBadge, MethodTag, Spinner, Empty, ColHead } from '../components/UI'
 import s from './GateLog.module.css'
 
@@ -243,7 +243,7 @@ function DetailPanel({ sessionId, sessionDir, unlockId }) {
   const [clips,      setClips]   = useState(null)
   const [showAll,    setShowAll] = useState(false)
   const [loading,    setLoading] = useState(false)
-  const [enrollInfo, setEnroll]  = useState(null)
+  const [enrollInfo, setEnroll]  = useState(null)   // { incoming: {...}, outgoing: {...} }
 
   useEffect(() => {
     if (!sessionId) return
@@ -259,8 +259,8 @@ function DetailPanel({ sessionId, sessionDir, unlockId }) {
   useEffect(() => {
     if (!unlockId) { setEnroll(null); return }
     let cancelled = false
-    getEnrollByUnlock(unlockId)
-      .then(r => { if (!cancelled && r.data?.id) setEnroll(r.data) })
+    getEnrollByUnlockAll(unlockId)
+      .then(r => { if (!cancelled) setEnroll(r.data || {}) })
       .catch(() => {})
     return () => { cancelled = true }
   }, [unlockId])
@@ -305,18 +305,38 @@ function DetailPanel({ sessionId, sessionDir, unlockId }) {
               {best.frigate_event_id}
             </span>
           </div>
-          {enrollInfo && (
+          {enrollInfo?.incoming && (
             <div className={s.detMetaRow}>
-              <span className={s.mk}>Enroll</span>
+              <span className={s.mk}>Enroll ↓</span>
               <span className={s.mv}>
                 <span
                   title="Xem trong Enroll"
-                  style={{ cursor: 'pointer', color: enrollInfo.status === 'enrolled' ? 'var(--in)' : 'var(--tmd)',
+                  style={{ cursor: 'pointer', color: enrollInfo.incoming.status === 'enrolled' ? 'var(--in)' : 'var(--tmd)',
                            textDecoration: 'underline', textUnderlineOffset: 3 }}
                   onClick={() => navigate('/enroll?tab=sessions')}
                 >
-                  {enrollInfo.status} · {enrollInfo.persons_enrolled}/{enrollInfo.person_count} người
+                  {enrollInfo.incoming.status} · {enrollInfo.incoming.persons_enrolled}/{enrollInfo.incoming.person_count} người
                 </span>
+              </span>
+            </div>
+          )}
+          {enrollInfo?.outgoing && (
+            <div className={s.detMetaRow}>
+              <span className={s.mk}>Nhận diện ↑</span>
+              <span className={s.mv}>
+                {enrollInfo.outgoing.recognized_name ? (
+                  <span style={{ color: 'var(--in)' }}>
+                    {enrollInfo.outgoing.recognized_name}
+                    {enrollInfo.outgoing.recognized_room && ` · ${enrollInfo.outgoing.recognized_room}`}
+                    {enrollInfo.outgoing.recognition_sim != null
+                      ? ` (${(enrollInfo.outgoing.recognition_sim * 100).toFixed(0)}%)`
+                      : ''}
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--tmd)' }}>
+                    {enrollInfo.outgoing.status} · chưa nhận diện
+                  </span>
+                )}
               </span>
             </div>
           )}
