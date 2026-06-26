@@ -20,7 +20,7 @@ from config import (
 )
 from db import poll_new_gate_events, enqueue, claim_job, release_stuck, upsert_heartbeat
 from extractor import Extractor
-from pipeline import run_job
+from pipeline import run_job, run_outgoing_job
 
 log = logging.getLogger(__name__)
 _shutdown = threading.Event()
@@ -51,27 +51,34 @@ def poll_and_enqueue():
     try:
         events = poll_new_gate_events(since_min=15)
         for ev in events:
+            direction = ev.get("direction", "incoming")
             jid = enqueue(ev["door_id"], ev["unlock_id"],
-                          ev["event_time_vn"], ev["room_label"], JOB_DELAY_S)
+                          ev["event_time_vn"], ev["room_label"], JOB_DELAY_S,
+                          direction=direction)
             if jid:
-                log.info(f"Enqueued job #{jid} {ev['room_label']} @ {ev['event_time_vn']}")
+                log.info(f"Enqueued {direction} job #{jid} {ev['room_label']} @ {ev['event_time_vn']}")
     except Exception as e:
         log.error(f"poll_and_enqueue error: {e}")
 
 
 def run_one_job(job: dict):
     jid = job["id"]
+    direction = job.get("direction", "incoming")
     with _lock: _active.add(jid)
     try:
-        log.info(f"[Job#{jid}] {job['room_label']} @ {job['event_time_vn']} "
+        log.info(f"[Job#{jid}] {direction} {job['room_label']} @ {job['event_time_vn']} "
                  f"attempt={job['attempt_count']}")
-        run_job(
+        kwargs = dict(
             job_id=jid,
             door_id=job["door_id"],
             unlock_id=job["unlock_id"],
             event_time_vn=job["event_time_vn"],
             room_label=job["room_label"],
         )
+        if direction == "outgoing":
+            run_outgoing_job(**kwargs)
+        else:
+            run_job(**kwargs)
     except Exception as e:
         log.exception(f"[Job#{jid}] unhandled: {e}")
     finally:

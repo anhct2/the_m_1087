@@ -94,6 +94,43 @@
   border-radius: 6px; font-size: 0.82rem;
   background: var(--c-surface); color: var(--c-text); cursor: pointer;
 }
+.fgroup {
+  display: flex; border: 1px solid var(--c-border); border-radius: 6px; overflow: hidden;
+}
+.fbtn {
+  padding: 5px 10px; font-size: 0.78rem; border: none; cursor: pointer;
+  background: transparent; color: var(--c-text-2); white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.fbtn:hover  { background: rgba(255,255,255,.06); color: var(--c-text); }
+.fbtnOn { background: #1e3a8a55; color: #93c5fd; font-weight: 600; }
+
+/* ── Recognized person (outgoing) ───────────────────────── */
+.recognizedCard {
+  display: flex; align-items: center; gap: 8px;
+}
+.recognizedInfo {
+  display: flex; flex-direction: column; gap: 1px;
+}
+.recognizedName { font-size: 0.8rem; font-weight: 600; }
+.recognizedRoom { font-size: 0.72rem; color: var(--c-text-2); }
+.recognizedSim  { font-size: 0.7rem; color: #2dd4bf; }
+.recognizedBig  {
+  display: flex; gap: 16px; align-items: flex-start;
+  padding: 12px; background: #14532d1a; border: 1px solid #4ade8033;
+  border-radius: 8px;
+}
+.recognizedMeta {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.recognizedNote {
+  font-size: 0.72rem; color: var(--c-text-2); margin-top: 4px;
+}
+.recognizedEmpty {
+  display: flex; align-items: center; padding: 10px;
+  background: rgba(255,255,255,.03); border-radius: 8px;
+  font-size: 0.82rem;
+}
 
 /* ── Table ───────────────────────────────────────────────── */
 .tableWrap {
