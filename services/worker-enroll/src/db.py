@@ -281,7 +281,7 @@ def create_session(job_id: int, door_id: str, unlock_id: str,
 
 def update_session(sid: str, **kw) -> None:
     allowed = {
-        "status","person_count","persons_enrolled","overall_quality",
+        "status","room_label","person_count","persons_enrolled","overall_quality",
         "best_face_score","stopped_at_cam","used_video",
         "fetch_ms","extract_ms","total_ms","error_msg","warnings",
         "recognized_person_id","recognition_sim",
