@@ -62,8 +62,9 @@ export const getRoomDay     = (room, date) => api.get(`/api/rooms/${encodeURICom
 // ── Enroll ───────────────────────────────────────────────────────
 export const getEnrollSummary  = ()           => api.get('/api/enroll/stats/summary')
 export const getEnrollQueue    = ()           => api.get('/api/enroll/stats/queue')
-export const getEnrollSessions = (params)     => api.get('/api/enroll/sessions', { params })
-export const getEnrollSession  = (id)         => api.get(`/api/enroll/sessions/${id}`)
+export const getEnrollSessions    = (params)     => api.get('/api/enroll/sessions', { params })
+export const getEnrollSession     = (id)         => api.get(`/api/enroll/sessions/${id}`)
+export const getEnrollByUnlockAll = (unlockId)   => api.get(`/api/enroll/sessions/by-unlock/${unlockId}`)
 export const getEnrollProfiles = (params)     => api.get('/api/enroll/profiles', { params })
 export const getEnrollProfile  = (id)         => api.get(`/api/enroll/profiles/${id}`)
 export const patchEnrollProfile= (id, body)   => api.patch(`/api/enroll/profiles/${id}`, body)
