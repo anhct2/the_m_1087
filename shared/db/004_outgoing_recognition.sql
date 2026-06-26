@@ -4,10 +4,6 @@
 -- Run: psql -d m1087 -f 004_outgoing_recognition.sql
 -- ============================================================
 
--- Tránh bị treo do lock: nếu quá 5s không lấy được lock thì báo lỗi
-SET lock_timeout = '5s';
-SET statement_timeout = '60s';
-
 -- 1. Thêm direction vào job_queue
 ALTER TABLE enroll.job_queue
     ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'incoming'
