@@ -370,7 +370,6 @@ def backfill(body: dict, _=Depends(require_auth)):
     room      = body.get("room", "").strip() or None
     direction = body.get("direction", "incoming")
 
-    room_filter = "AND gs.label = %(room)s" if room else ""
     params: dict = {"days": str(days)}
     if room:
         params["room"] = room
@@ -379,27 +378,37 @@ def backfill(body: dict, _=Depends(require_auth)):
         conn.autocommit = False
         with conn.cursor() as cur:
             if direction == "outgoing":
+                # Outgoing: dùng gate_sessions (door opens không có unlock)
+                # unlock_id = NULL nên dùng door_id làm unlock_id key để tránh NULL
+                # Clip lookup sẽ dùng session_id = door_id thay vì unlock_id
+                room_join_filter = "AND gsc.label = %(room)s" if room else ""
                 cur.execute(f"""
-                    SELECT DISTINCT ON (session_id, unlock_id)
-                        session_id::text AS door_id,
-                        unlock_id::text  AS unlock_id,
-                        event_time_vn,
-                        label AS room_label
-                    FROM gate_session_clips gsc
-                    WHERE gsc.direction  = 'outgoing'
-                      AND gsc.label      LIKE 'P.%%'
-                      AND gsc.event_time_vn >= now() - (%(days)s || ' days')::interval
-                      {room_filter.replace('gs.label','gsc.label')}
+                    SELECT DISTINCT ON (gs.door_id)
+                        gs.door_id::text  AS door_id,
+                        gs.door_id::text  AS unlock_id,
+                        gs.event_time_vn,
+                        gsc_label.label   AS room_label
+                    FROM gate_sessions gs
+                    JOIN LATERAL (
+                        SELECT gsc.label
+                        FROM gate_session_clips gsc
+                        WHERE gsc.session_id = gs.door_id
+                          AND gsc.label LIKE 'P.%%'
+                          {room_join_filter}
+                        LIMIT 1
+                    ) gsc_label ON true
+                    WHERE gs.direction = 'outgoing'
+                      AND gs.event_time_vn >= now() - (%(days)s || ' days')::interval
                       AND NOT EXISTS (
                           SELECT 1 FROM enroll.job_queue jq
-                          WHERE jq.door_id   = gsc.session_id::text
-                            AND jq.unlock_id = gsc.unlock_id::text
+                          WHERE jq.door_id   = gs.door_id::text
                             AND jq.direction = 'outgoing'
                             AND jq.status IN ('pending','running','done')
                       )
-                    ORDER BY session_id, unlock_id, event_time_vn DESC
+                    ORDER BY gs.door_id, gs.event_time_vn DESC
                 """, params)
             else:
+                room_filter = "AND gs.label = %(room)s" if room else ""
                 cur.execute(f"""
                     SELECT gs.door_id, gs.unlock_id,
                            gs.event_time_vn, gs.label AS room_label
