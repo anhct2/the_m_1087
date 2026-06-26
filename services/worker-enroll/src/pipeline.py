@@ -301,23 +301,19 @@ def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-        # Nhận diện: chỉ match người đang có room_stay mở và entry_ts < event_time_vn
-        best_pid = None; best_sim = 0.0; best_room = None
+        # Nhận diện: search toàn bộ profiles
+        best_pid = None; best_sim = 0.0
         for p in accumulated:
             if p.face_embedding is not None and p.face_quality >= FACE_POSSIBLE:
-                match = find_best_profile_match(
-                    p.face_embedding.tolist(), event_time_vn, RECOGNIZE_SIM_MIN
-                )
+                match = find_best_profile_match(p.face_embedding.tolist(), RECOGNIZE_SIM_MIN)
                 if match and match[1] > best_sim:
-                    best_pid, best_sim, best_room = match[0], match[1], match[2]
+                    best_pid, best_sim = match[0], match[1]
 
         if best_pid:
             n = close_room_stay(best_pid, event_time_vn, door_id, unlock_id)
-            log.info(f"[OJob#{job_id}] identified {best_pid[:8]} "
-                     f"room={best_room} sim={best_sim:.3f} closed {n} room_stay(s)")
+            log.info(f"[OJob#{job_id}] identified {best_pid[:8]} sim={best_sim:.3f} "
+                     f"closed {n} room_stay(s)")
             status = "enrolled"
-            # Cập nhật room_label của session từ profile để hiển thị đúng trên UI
-            update_session(sid, room_label=best_room or '')
         else:
             status = "low_quality" if best_conf >= CONF_LOW else "no_detection"
 
@@ -336,7 +332,7 @@ def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
         )
         done_job(job_id, sid)
         log.info(f"[OJob#{job_id}] {status} identified={bool(best_pid)} "
-                 f"room={best_room} conf={best_conf:.3f} {total_ms}ms")
+                 f"conf={best_conf:.3f} {total_ms}ms")
 
     except Exception as e:
         log.exception(f"[OJob#{job_id}] error: {e}")

@@ -368,7 +368,11 @@ function SessionDetail({ d, onClose, onRetry, onAssign }) {
     if (!d.event_time_vn) return
     const dateStr = new Date(d.event_time_vn).toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
     const params = new URLSearchParams({ since: dateStr, until: dateStr })
-    if (d.room_label) params.set('room', d.room_label)
+    if (d.direction === 'outgoing') {
+      params.set('direction', 'outgoing')
+    } else if (d.room_label) {
+      params.set('room', d.room_label)
+    }
     navigate(`/gate-log?${params}`)
   }
 
@@ -539,9 +543,12 @@ function SessionDetail({ d, onClose, onRetry, onAssign }) {
 
 // ── Sessions Tab ──────────────────────────────────────────────────
 const STUCK_SESSION_MS = 5 * 60 * 1000
+const SES_LIMIT = 50
 
 function SessionsTab() {
   const [rows,      setRows]   = useState([])
+  const [total,     setTotal]  = useState(0)
+  const [offset,    setOffset] = useState(0)
   const [loading,   setLoading] = useState(true)
   const [roomF,     setRoomF]   = useState('')
   const [statusF,   setStatusF] = useState('')
@@ -553,19 +560,21 @@ function SessionsTab() {
   const [resetting,   setReset]       = useState(false)
   const [retryingAll, setRetryingAll] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (off = 0) => {
     setLoading(true)
     try {
-      const params = {}
+      const params = { limit: SES_LIMIT, offset: off }
       if (roomF)   params.room      = roomF
       if (statusF) params.status    = statusF
       if (dirF)    params.direction = dirF
       const { data } = await getEnrollSessions(params)
-      setRows(data)
+      setRows(data.items ?? data)
+      setTotal(data.total ?? (data.items ? data.items.length : data.length))
+      setOffset(off)
     } finally { setLoading(false) }
   }, [roomF, statusF, dirF])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(0) }, [load])
 
   const openDetail = async (id) => {
     if (selected === id) { setSel(null); setDetail(null); return }
@@ -593,14 +602,14 @@ function SessionsTab() {
       const { data } = await getEnrollSession(detail.id)
       setDetail(data)
     }
-    load()
+    load(offset)
   }
 
   const handleReleaseStuck = async () => {
     setReset(true)
     try {
       const { data } = await postReleaseStuck()
-      load()
+      load(0)
       alert(`Đã reset: ${data.jobs_reset} job${data.jobs_reset !== 1 ? 's' : ''}, ${data.sessions_reset} session${data.sessions_reset !== 1 ? 's' : ''}`)
     } catch (e) {
       alert(e.response?.data?.detail || 'Lỗi khi reset')
@@ -617,7 +626,7 @@ function SessionsTab() {
     setRetryingAll(true)
     try {
       await Promise.all(processingRows.map(r => retrySession(r.id).catch(() => {})))
-      load()
+      load(offset)
     } finally { setRetryingAll(false) }
   }
 
@@ -639,7 +648,7 @@ function SessionsTab() {
               onClick={() => setDirF(k)}>{l}</button>
           ))}
         </div>
-        <button className={s.btnSecondary} onClick={load}>
+        <button className={s.btnSecondary} onClick={() => load(0)}>
           <Icon name="refresh" size={13} /> Làm mới
         </button>
         {processingRows.length > 0 && (
@@ -662,7 +671,11 @@ function SessionsTab() {
             {resetting ? <Spinner size={12} /> : '⚠'} Reset {stuckSessions.length} bị kẹt
           </button>
         )}
-        <span className={s.filterMeta}>{rows.length} sessions</span>
+        <span className={s.filterMeta}>
+          {total > SES_LIMIT
+            ? `${offset + 1}–${Math.min(offset + SES_LIMIT, total)} / ${total} sessions`
+            : `${total} sessions`}
+        </span>
       </div>
 
       <div className={s.tableWrap}>
@@ -774,6 +787,18 @@ function SessionsTab() {
           </tbody>
         </table>
       </div>
+
+      {total > SES_LIMIT && (
+        <div className={s.pagRow}>
+          <button className={s.btnSecondary} disabled={offset === 0} onClick={() => load(offset - SES_LIMIT)}>
+            ← Trước
+          </button>
+          <span className={s.pagInfo}>{offset + 1}–{Math.min(offset + SES_LIMIT, total)} / {total}</span>
+          <button className={s.btnSecondary} disabled={offset + SES_LIMIT >= total} onClick={() => load(offset + SES_LIMIT)}>
+            Sau →
+          </button>
+        </div>
+      )}
 
       {(detail || detailL) && (
         <>

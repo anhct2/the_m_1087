@@ -73,10 +73,18 @@ def list_sessions(
     if direction:
         filters.append("vs.direction = %(direction)s")
         params["direction"] = direction
+    filter_params = dict(params)
     params.update({"limit": limit, "offset": offset})
 
     with get_conn() as conn:
         with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT COUNT(*) AS total
+                FROM enroll.v_sessions vs
+                WHERE {' AND '.join(filters)}
+            """, filter_params)
+            total = cur.fetchone()["total"]
+
             cur.execute(f"""
                 SELECT vs.id, vs.job_id, vs.room_label, vs.event_time_vn, vs.status,
                        vs.direction,
@@ -100,7 +108,7 @@ def list_sessions(
                 LIMIT %(limit)s OFFSET %(offset)s
             """, params)
             rows = cur.fetchall()
-    return [dict(r) for r in rows]
+    return {"items": [dict(r) for r in rows], "total": total}
 
 
 # ── Session by unlock_id (gate-log cross-link) ──────────────────
@@ -378,26 +386,49 @@ def backfill(body: dict, _=Depends(require_auth)):
         conn.autocommit = False
         with conn.cursor() as cur:
             if direction == "outgoing":
-                # Dùng gate_session_clips làm nguồn (cùng source với GateLog UI).
-                # Distinct theo session_id → 1 job per outgoing gate event.
-                room_filter_out = "AND gsc.label = %(room)s" if room else ""
+                # Outgoing: dùng gate_sessions (door opens không có unlock)
+                # unlock_id = NULL nên dùng door_id làm unlock_id key để tránh NULL
+                # Clip lookup sẽ dùng session_id = door_id thay vì unlock_id
+                # LEFT JOIN LATERAL: không bỏ session nếu clips chưa có label 'P.%'
+                room_join_filter = "AND gsc.label = %(room)s" if room else ""
                 cur.execute(f"""
-                    SELECT DISTINCT ON (gsc.session_id)
-                        gsc.session_id::text AS door_id,
-                        gsc.session_id::text AS unlock_id,
-                        gsc.event_time_vn,
-                        ''                   AS room_label
-                    FROM gate_session_clips gsc
-                    WHERE gsc.direction = 'outgoing'
-                      AND gsc.event_time_vn >= now() - (%(days)s || ' days')::interval
-                      {room_filter_out}
+                    SELECT DISTINCT ON (gs.door_id)
+                        gs.door_id::text                        AS door_id,
+                        gs.door_id::text                        AS unlock_id,
+                        gs.event_time_vn,
+                        COALESCE(gsc_label.label, '')           AS room_label
+                    FROM gate_sessions gs
+                    LEFT JOIN LATERAL (
+                        SELECT gsc.label
+                        FROM gate_session_clips gsc
+                        WHERE gsc.session_id = gs.door_id
+                          AND gsc.label LIKE 'P.%%'
+                          {room_join_filter}
+                        LIMIT 1
+                    ) gsc_label ON true
+                    WHERE gs.direction = 'outgoing'
+                      AND gs.event_time_vn >= now() - (%(days)s || ' days')::interval
+                      -- Phải có ít nhất 1 clip (dù label rỗng)
+                      AND EXISTS (
+                          SELECT 1 FROM gate_session_clips gsc2
+                          WHERE gsc2.session_id = gs.door_id
+                            AND gsc2.direction  = 'outgoing'
+                      )
+                      -- Bỏ qua nếu đang pending/running
                       AND NOT EXISTS (
                           SELECT 1 FROM enroll.job_queue jq
-                          WHERE jq.door_id   = gsc.session_id::text
+                          WHERE jq.door_id   = gs.door_id::text
                             AND jq.direction = 'outgoing'
-                            AND jq.status IN ('pending','running','done')
+                            AND jq.status IN ('pending','running')
                       )
-                    ORDER BY gsc.session_id, gsc.event_time_vn DESC
+                      -- Bỏ qua nếu đã nhận diện được người (recognized_person_id IS NOT NULL)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM enroll.enroll_sessions es
+                          WHERE es.door_id   = gs.door_id::text
+                            AND es.direction = 'outgoing'
+                            AND es.recognized_person_id IS NOT NULL
+                      )
+                    ORDER BY gs.door_id, gs.event_time_vn DESC
                 """, params)
             else:
                 room_filter = "AND gs.label = %(room)s" if room else ""

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
 from config import (
-    POLL_INTERVAL_S, JOB_DELAY_S, MAX_CONCURRENT,
+    POLL_INTERVAL_S, JOB_DELAY_S, OUTGOING_JOB_DELAY_S, MAX_CONCURRENT,
     STUCK_TIMEOUT_M, WORKER_ID, LOG_LEVEL, LOG_FILE,
 )
 from db import poll_new_gate_events, enqueue, claim_job, release_stuck, upsert_heartbeat
@@ -52,11 +52,12 @@ def poll_and_enqueue():
         events = poll_new_gate_events(since_min=15)
         for ev in events:
             direction = ev.get("direction", "incoming")
+            delay = OUTGOING_JOB_DELAY_S if direction == "outgoing" else JOB_DELAY_S
             jid = enqueue(ev["door_id"], ev["unlock_id"],
-                          ev["event_time_vn"], ev["room_label"], JOB_DELAY_S,
+                          ev["event_time_vn"], ev["room_label"], delay,
                           direction=direction)
             if jid:
-                log.info(f"Enqueued {direction} job #{jid} {ev['room_label']} @ {ev['event_time_vn']}")
+                log.info(f"Enqueued {direction} job #{jid} {ev['room_label']} @ {ev['event_time_vn']} delay={delay}s")
     except Exception as e:
         log.error(f"poll_and_enqueue error: {e}")
 

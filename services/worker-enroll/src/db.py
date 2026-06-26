@@ -32,11 +32,8 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Incoming: phải là password method
-            # Dùng ::text cast vì gate_sessions.door_id/unlock_id là BIGINT trên VPS
             cur.execute("""
-                SELECT gs.door_id::text AS door_id,
-                       gs.unlock_id::text AS unlock_id,
-                       gs.event_time_vn,
+                SELECT gs.door_id, gs.unlock_id, gs.event_time_vn,
                        gs.label AS room_label, 'incoming'::text AS direction
                 FROM gate_sessions gs
                 WHERE gs.method      = 'password'
@@ -45,32 +42,45 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
                   AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gs.door_id::text
-                        AND jq.unlock_id = gs.unlock_id::text
+                      WHERE jq.door_id   = gs.door_id
+                        AND jq.unlock_id = gs.unlock_id
                         AND jq.direction = 'incoming'
                   )
                 ORDER BY gs.event_time_vn DESC
             """, {"m": str(since_min)})
             incoming = [dict(r) for r in cur.fetchall()]
 
-            # Outgoing: dùng gate_session_clips (cùng source với GateLog UI).
-            # session_id = door_id, dùng làm unlock_id key luôn.
+            # Outgoing: dùng gate_sessions (door_opens không có unlock).
+            # unlock_id = NULL trên VPS → dùng door_id làm unlock_id key.
+            # LEFT JOIN LATERAL: không bỏ session nếu clips chưa có label 'P.%'.
             cur.execute("""
-                SELECT DISTINCT ON (gsc.session_id)
-                    gsc.session_id::text AS door_id,
-                    gsc.session_id::text AS unlock_id,
-                    gsc.event_time_vn,
-                    ''                   AS room_label,
-                    'outgoing'::text     AS direction
-                FROM gate_session_clips gsc
-                WHERE gsc.direction = 'outgoing'
-                  AND gsc.event_time_vn >= now() - (%(m)s || ' minutes')::interval
+                SELECT DISTINCT ON (gs.door_id)
+                    gs.door_id::text                  AS door_id,
+                    gs.door_id::text                  AS unlock_id,
+                    gs.event_time_vn,
+                    COALESCE(gsc_label.label, '')     AS room_label,
+                    'outgoing'::text                  AS direction
+                FROM gate_sessions gs
+                LEFT JOIN LATERAL (
+                    SELECT gsc.label
+                    FROM gate_session_clips gsc
+                    WHERE gsc.session_id = gs.door_id
+                      AND gsc.label LIKE 'P.%%'
+                    LIMIT 1
+                ) gsc_label ON true
+                WHERE gs.direction = 'outgoing'
+                  AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
+                  AND EXISTS (
+                      SELECT 1 FROM gate_session_clips gsc2
+                      WHERE gsc2.session_id = gs.door_id
+                        AND gsc2.direction  = 'outgoing'
+                  )
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gsc.session_id::text
+                      WHERE jq.door_id   = gs.door_id::text
                         AND jq.direction = 'outgoing'
                   )
-                ORDER BY gsc.session_id, gsc.event_time_vn DESC
+                ORDER BY gs.door_id, gs.event_time_vn DESC
             """, {"m": str(since_min)})
             outgoing = [dict(r) for r in cur.fetchall()]
 
@@ -97,7 +107,7 @@ def get_gate_clips(door_id: str, unlock_id: str,
                     FROM gate_session_clips gsc
                     WHERE gsc.session_id = %(did)s::bigint
                       AND gsc.direction  = 'outgoing'
-                    ORDER BY COALESCE(gsc.frigate_score, 0) DESC
+                    ORDER BY gsc.clip_finalized DESC NULLS LAST, COALESCE(gsc.frigate_score, 0) DESC
                 """, {"did": door_id})
             else:
                 cur.execute("""
@@ -316,31 +326,20 @@ def save_clip_result(sid: str, camera_id: str, camera_order: int,
 
 
 def find_best_profile_match(face_emb: List[float],
-                            exit_ts,
-                            threshold: float = 0.55) -> Optional[Tuple[str, float, str]]:
-    """Tìm profile tốt nhất trong số những người đang ở (room_stay mở, entry < exit_ts).
-
-    Chỉ match người thực sự đang trong tòa nhà tại thời điểm exit_ts.
-    Trả về (person_id, similarity, known_room) hoặc None.
-    """
+                            threshold: float = 0.55) -> Optional[Tuple[str, float]]:
+    """Tìm profile tốt nhất trong TOÀN BỘ profiles (dùng cho outgoing recognition)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT pp.id,
-                       1-(pp.face_embedding<=>%(emb)s::vector) AS sim,
-                       pp.known_room
-                FROM enroll.person_profiles pp
-                JOIN enroll.room_stays rs ON rs.person_id = pp.id
-                WHERE pp.face_embedding IS NOT NULL
-                  AND pp.is_active = true
-                  AND rs.exit_ts IS NULL
-                  AND rs.entry_ts < %(exit_ts)s
-                ORDER BY pp.face_embedding<=>%(emb)s::vector
+                SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
+                FROM enroll.person_profiles
+                WHERE face_embedding IS NOT NULL AND is_active = true
+                ORDER BY face_embedding<=>%(emb)s::vector
                 LIMIT 1
-            """, {"emb": face_emb, "exit_ts": exit_ts})
+            """, {"emb": face_emb})
             row = cur.fetchone()
             if row and row["sim"] >= threshold:
-                return row["id"], float(row["sim"]), row["known_room"]
+                return row["id"], float(row["sim"])
             return None
 
 
