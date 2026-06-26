@@ -53,29 +53,24 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
             """, {"m": str(since_min)})
             incoming = [dict(r) for r in cur.fetchall()]
 
-            # Outgoing: label = NULL (không có key swipe).
-            # Dùng door_id làm unlock_id key, room_label = '' placeholder.
+            # Outgoing: dùng gate_session_clips (cùng source với GateLog UI).
+            # session_id = door_id, dùng làm unlock_id key luôn.
             cur.execute("""
-                SELECT DISTINCT ON (gs.door_id)
-                    gs.door_id::text  AS door_id,
-                    gs.door_id::text  AS unlock_id,
-                    gs.event_time_vn,
-                    ''                AS room_label,
-                    'outgoing'::text  AS direction
-                FROM gate_sessions gs
-                WHERE gs.direction = 'outgoing'
-                  AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
-                  AND EXISTS (
-                      SELECT 1 FROM gate_session_clips gsc
-                      WHERE gsc.session_id = gs.door_id
-                        AND gsc.direction  = 'outgoing'
-                  )
+                SELECT DISTINCT ON (gsc.session_id)
+                    gsc.session_id::text AS door_id,
+                    gsc.session_id::text AS unlock_id,
+                    gsc.event_time_vn,
+                    ''                   AS room_label,
+                    'outgoing'::text     AS direction
+                FROM gate_session_clips gsc
+                WHERE gsc.direction = 'outgoing'
+                  AND gsc.event_time_vn >= now() - (%(m)s || ' minutes')::interval
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gs.door_id::text
+                      WHERE jq.door_id   = gsc.session_id::text
                         AND jq.direction = 'outgoing'
                   )
-                ORDER BY gs.door_id, gs.event_time_vn DESC
+                ORDER BY gsc.session_id, gsc.event_time_vn DESC
             """, {"m": str(since_min)})
             outgoing = [dict(r) for r in cur.fetchall()]
 

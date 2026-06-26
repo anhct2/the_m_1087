@@ -378,30 +378,26 @@ def backfill(body: dict, _=Depends(require_auth)):
         conn.autocommit = False
         with conn.cursor() as cur:
             if direction == "outgoing":
-                # Outgoing: label = NULL (không có key swipe) → dùng '' làm placeholder.
-                # Nhận diện sẽ lấy room từ person_profiles.known_room.
-                # Dùng door_id làm unlock_id key (unlock_id = NULL trên VPS).
-                cur.execute("""
-                    SELECT DISTINCT ON (gs.door_id)
-                        gs.door_id::text  AS door_id,
-                        gs.door_id::text  AS unlock_id,
-                        gs.event_time_vn,
-                        ''                AS room_label
-                    FROM gate_sessions gs
-                    WHERE gs.direction = 'outgoing'
-                      AND gs.event_time_vn >= now() - (%(days)s || ' days')::interval
-                      AND EXISTS (
-                          SELECT 1 FROM gate_session_clips gsc
-                          WHERE gsc.session_id = gs.door_id
-                            AND gsc.direction  = 'outgoing'
-                      )
+                # Dùng gate_session_clips làm nguồn (cùng source với GateLog UI).
+                # Distinct theo session_id → 1 job per outgoing gate event.
+                room_filter_out = "AND gsc.label = %(room)s" if room else ""
+                cur.execute(f"""
+                    SELECT DISTINCT ON (gsc.session_id)
+                        gsc.session_id::text AS door_id,
+                        gsc.session_id::text AS unlock_id,
+                        gsc.event_time_vn,
+                        ''                   AS room_label
+                    FROM gate_session_clips gsc
+                    WHERE gsc.direction = 'outgoing'
+                      AND gsc.event_time_vn >= now() - (%(days)s || ' days')::interval
+                      {room_filter_out}
                       AND NOT EXISTS (
                           SELECT 1 FROM enroll.job_queue jq
-                          WHERE jq.door_id   = gs.door_id::text
+                          WHERE jq.door_id   = gsc.session_id::text
                             AND jq.direction = 'outgoing'
                             AND jq.status IN ('pending','running','done')
                       )
-                    ORDER BY gs.door_id, gs.event_time_vn DESC
+                    ORDER BY gsc.session_id, gsc.event_time_vn DESC
                 """, params)
             else:
                 room_filter = "AND gs.label = %(room)s" if room else ""
