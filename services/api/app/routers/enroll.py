@@ -378,27 +378,23 @@ def backfill(body: dict, _=Depends(require_auth)):
         conn.autocommit = False
         with conn.cursor() as cur:
             if direction == "outgoing":
-                # Outgoing: dùng gate_sessions (door opens không có unlock)
-                # unlock_id = NULL nên dùng door_id làm unlock_id key để tránh NULL
-                # Clip lookup sẽ dùng session_id = door_id thay vì unlock_id
-                room_join_filter = "AND gsc.label = %(room)s" if room else ""
-                cur.execute(f"""
+                # Outgoing: label = NULL (không có key swipe) → dùng '' làm placeholder.
+                # Nhận diện sẽ lấy room từ person_profiles.known_room.
+                # Dùng door_id làm unlock_id key (unlock_id = NULL trên VPS).
+                cur.execute("""
                     SELECT DISTINCT ON (gs.door_id)
                         gs.door_id::text  AS door_id,
                         gs.door_id::text  AS unlock_id,
                         gs.event_time_vn,
-                        gsc_label.label   AS room_label
+                        ''                AS room_label
                     FROM gate_sessions gs
-                    JOIN LATERAL (
-                        SELECT gsc.label
-                        FROM gate_session_clips gsc
-                        WHERE gsc.session_id = gs.door_id
-                          AND gsc.label LIKE 'P.%%'
-                          {room_join_filter}
-                        LIMIT 1
-                    ) gsc_label ON true
                     WHERE gs.direction = 'outgoing'
                       AND gs.event_time_vn >= now() - (%(days)s || ' days')::interval
+                      AND EXISTS (
+                          SELECT 1 FROM gate_session_clips gsc
+                          WHERE gsc.session_id = gs.door_id
+                            AND gsc.direction  = 'outgoing'
+                      )
                       AND NOT EXISTS (
                           SELECT 1 FROM enroll.job_queue jq
                           WHERE jq.door_id   = gs.door_id::text
