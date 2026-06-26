@@ -154,6 +154,33 @@ def skip_job(job_id: int, reason: str) -> None:
         conn.commit()
 
 
+def upsert_heartbeat(worker_id: str, status: str, active_jobs: int,
+                     max_concurrent: int, poll_interval_s: int,
+                     started_at, hostname: str = "") -> None:
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO enroll.worker_heartbeat
+                        (worker_id, last_beat, status, active_jobs,
+                         max_concurrent, poll_interval_s, hostname, started_at, updated_at)
+                    VALUES (%(w)s, now(), %(s)s, %(a)s, %(mc)s, %(pi)s, %(h)s, %(st)s, now())
+                    ON CONFLICT (worker_id) DO UPDATE SET
+                        last_beat       = now(),
+                        status          = EXCLUDED.status,
+                        active_jobs     = EXCLUDED.active_jobs,
+                        max_concurrent  = EXCLUDED.max_concurrent,
+                        poll_interval_s = EXCLUDED.poll_interval_s,
+                        hostname        = EXCLUDED.hostname,
+                        updated_at      = now()
+                """, {"w": worker_id, "s": status, "a": active_jobs,
+                      "mc": max_concurrent, "pi": poll_interval_s,
+                      "h": hostname, "st": started_at})
+            conn.commit()
+    except Exception as e:
+        log.warning(f"heartbeat write error: {e}")
+
+
 def release_stuck(timeout_min: int = 30) -> int:
     with get_conn() as conn:
         with conn.cursor() as cur:
