@@ -514,6 +514,24 @@ def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
     return {"ok": True, "profile_id": profile_id}
 
 
+# ── Worker heartbeat status ──────────────────────────────────
+@router.get("/worker-status")
+def worker_status(_=Depends(require_auth)):
+    """Trả về heartbeat của tất cả worker instances."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    worker_id, last_beat, status, active_jobs,
+                    max_concurrent, poll_interval_s, hostname, started_at,
+                    EXTRACT(EPOCH FROM (now() - last_beat))::int  AS seconds_ago,
+                    EXTRACT(EPOCH FROM (now() - started_at))::int AS uptime_s
+                FROM enroll.worker_heartbeat
+                ORDER BY last_beat DESC
+            """)
+            return [dict(r) for r in cur.fetchall()]
+
+
 # ── Release stuck jobs / sessions ───────────────────────────────
 @router.post("/release-stuck")
 def release_stuck_endpoint(_=Depends(require_auth)):

@@ -72,6 +72,11 @@
   width: 6px; height: 6px; border-radius: 50%;
   background: #f87171; flex-shrink: 0;
 }
+.tabDotBlue {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #60a5fa; flex-shrink: 0;
+  animation: dotPulse 1.5s ease-in-out infinite;
+}
 
 /* ── Filter row ──────────────────────────────────────────── */
 .filterRow {
@@ -523,4 +528,45 @@
   display: flex; justify-content: space-between;
   font-size: 0.68rem; color: var(--c-text-2); margin-top: 2px;
   border-top: 1px solid var(--c-border); padding-top: 6px;
+}
+
+/* ── Worker Tab ──────────────────────────────────────────── */
+.workerCard {
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 12px;
+}
+.workerHead {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 14px;
+}
+.workerDot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+}
+.workerDot[data-health="online"] { animation: dotPulse 2s ease-in-out infinite; }
+.workerName { font-size: 0.95rem; font-weight: 600; }
+.workerSub  { font-size: 0.75rem; color: var(--c-text-2); margin-top: 2px; }
+
+.workerStats {
+  display: flex; border: 1px solid var(--c-border); border-radius: 8px; overflow: hidden;
+}
+.workerStat      { flex: 1; padding: 10px 14px; text-align: center; }
+.workerStatVal   { font-size: 1.1rem; font-weight: 700; font-family: var(--mono, monospace); line-height: 1.1; }
+.workerStatLabel { font-size: 0.62rem; color: var(--c-text-2); text-transform: uppercase; letter-spacing: .05em; margin-top: 3px; }
+.workerStatDiv   { width: 1px; background: var(--c-border); }
+
+.workerQueueHead {
+  font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--c-text-2); margin: 16px 0 8px;
+}
+.workerQueueGrid  { display: flex; gap: 8px; flex-wrap: wrap; }
+.workerQueueCard  {
+  flex: 1; min-width: 80px;
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: 8px; padding: 10px 14px; text-align: center;
+}
+.workerQueueCnt   { font-size: 1.5rem; font-weight: 700; font-family: var(--mono, monospace); line-height: 1; }
+.workerQueueLabel { font-size: 0.65rem; color: var(--c-text-2); margin-top: 4px; text-transform: uppercase; }
+
+@keyframes dotPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .35; }
 }

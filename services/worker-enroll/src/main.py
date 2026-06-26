@@ -7,16 +7,18 @@ Dùng threading (khớp với psycopg2 sync).
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
 from config import (
     POLL_INTERVAL_S, JOB_DELAY_S, MAX_CONCURRENT,
     STUCK_TIMEOUT_M, WORKER_ID, LOG_LEVEL, LOG_FILE,
 )
-from db import poll_new_gate_events, enqueue, claim_job, release_stuck
+from db import poll_new_gate_events, enqueue, claim_job, release_stuck, upsert_heartbeat
 from extractor import Extractor
 from pipeline import run_job
 
@@ -94,12 +96,25 @@ def drain_queue():
         t.start()
 
 
+def _beat(started_at):
+    with _lock:
+        active = len(_active)
+    status = "running" if active > 0 else "idle"
+    upsert_heartbeat(
+        WORKER_ID, status, active,
+        MAX_CONCURRENT, POLL_INTERVAL_S,
+        started_at, socket.gethostname(),
+    )
+
+
 def main():
     setup_logging()
     log.info(f"=== worker-enroll {WORKER_ID} starting ===")
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT,  handle_signal)
+
+    started_at = datetime.now(timezone.utc)
 
     # Reset jobs left in 'running' state from a previous crash before doing anything else
     try:
@@ -114,6 +129,8 @@ def main():
     Extractor.get()
     log.info("ML model ready")
 
+    _beat(started_at)  # write initial heartbeat so dashboard shows online quickly
+
     tick = 0
     while not _shutdown.is_set():
         tick += 1
@@ -126,6 +143,7 @@ def main():
 
         poll_and_enqueue()
         drain_queue()
+        _beat(started_at)
         _shutdown.wait(timeout=POLL_INTERVAL_S)
 
     # Drain active jobs (max 5 min)

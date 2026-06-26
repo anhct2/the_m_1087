@@ -4,7 +4,7 @@ import {
   getEnrollSummary, getEnrollQueue, getEnrollSessions,
   getEnrollSession, getEnrollProfiles, patchEnrollProfile,
   getOccupancy, getEnrollJobs, postBackfill, cancelJob, retryJob,
-  retrySession, postReleaseStuck, assignSession, searchProfiles,
+  retrySession, postReleaseStuck, getWorkerStatus, assignSession, searchProfiles,
 } from '../api/client'
 import { Icon, Spinner, Empty, Lightbox } from '../components/UI'
 import s from './Enroll.module.css'
@@ -1079,12 +1079,156 @@ function JobsTab({ onRefreshStats }) {
   )
 }
 
+// ── Worker Tab ────────────────────────────────────────────────────
+const ONLINE_S   = 90    // seconds — green
+const DEGRADED_S = 300   // seconds — amber
+
+function workerHealth(secsAgo) {
+  if (secsAgo == null) return 'unknown'
+  if (secsAgo <= ONLINE_S)   return 'online'
+  if (secsAgo <= DEGRADED_S) return 'degraded'
+  return 'offline'
+}
+
+function fmtRelTime(s) {
+  if (s == null) return '—'
+  if (s < 60)   return `${s}s ago`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s ago`
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ago`
+}
+
+function fmtUptime(s) {
+  if (!s || s < 0) return '—'
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
+const HEALTH_COLOR = { online: '#4ade80', degraded: '#fbbf24', offline: '#f87171', unknown: '#475569' }
+const HEALTH_CLS   = { online: s.stEnrolled, degraded: s.stLowQ, offline: s.stFailed, unknown: s.stNone }
+const Q_COLOR = { pending: '#fbbf24', running: '#60a5fa', done: '#4ade80', failed: '#f87171', skipped: '#475569' }
+
+function WorkerTab({ queue }) {
+  const [workers, setWorkers] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await getWorkerStatus()
+      setWorkers(data)
+    } catch { /* ignore */ } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 15000)
+    return () => clearInterval(t)
+  }, [load])
+
+  const pending = queue.find(q => q.status === 'pending')?.cnt || 0
+  const anyOnline = workers.some(w => workerHealth(w.seconds_ago) === 'online')
+
+  return (
+    <div>
+      <div className={s.filterRow}>
+        <button className={s.btnSecondary} onClick={load}>
+          <Icon name="refresh" size={13} /> Làm mới
+        </button>
+        <span className={s.filterMeta}>cập nhật mỗi 15s</span>
+      </div>
+
+      {loading && <div className={s.center}><Spinner /></div>}
+
+      {!loading && workers.length === 0 && (
+        <div className={s.workerCard} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className={s.workerDot} style={{ background: '#475569' }} />
+          <div>
+            <div className={s.workerName}>Chưa có heartbeat</div>
+            <div className={s.workerSub}>Worker chưa chạy lần nào hoặc bảng <code>enroll.worker_heartbeat</code> chưa được tạo</div>
+          </div>
+        </div>
+      )}
+
+      {workers.map(w => {
+        const health = workerHealth(w.seconds_ago)
+        const dot    = HEALTH_COLOR[health]
+        return (
+          <div key={w.worker_id} className={s.workerCard}>
+            <div className={s.workerHead}>
+              <div className={s.workerDot} style={{ background: dot, boxShadow: `0 0 8px ${dot}` }}
+                   data-health={health} />
+              <div style={{ flex: 1 }}>
+                <div className={s.workerName}>{w.worker_id}</div>
+                <div className={s.workerSub}>
+                  {fmtRelTime(w.seconds_ago)}
+                  {w.hostname ? ` · ${w.hostname}` : ''}
+                  {' · '}last beat {fmtDt(w.last_beat)}
+                </div>
+              </div>
+              <span className={`${s.badge} ${HEALTH_CLS[health]}`}>
+                {health.toUpperCase()}
+              </span>
+            </div>
+
+            <div className={s.workerStats}>
+              <div className={s.workerStat}>
+                <div className={s.workerStatVal}>{w.active_jobs}/{w.max_concurrent}</div>
+                <div className={s.workerStatLabel}>Active jobs</div>
+              </div>
+              <div className={s.workerStatDiv} />
+              <div className={s.workerStat}>
+                <div className={s.workerStatVal}>{fmtUptime(w.uptime_s)}</div>
+                <div className={s.workerStatLabel}>Uptime</div>
+              </div>
+              <div className={s.workerStatDiv} />
+              <div className={s.workerStat}>
+                <div className={s.workerStatVal}>{w.poll_interval_s}s</div>
+                <div className={s.workerStatLabel}>Poll interval</div>
+              </div>
+              <div className={s.workerStatDiv} />
+              <div className={s.workerStat}>
+                <div className={s.workerStatVal} style={{ fontSize: '0.78rem' }}>{fmtDt(w.started_at)}</div>
+                <div className={s.workerStatLabel}>Started</div>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+
+      <div className={s.workerQueueHead}>Queue (7 ngày gần nhất)</div>
+      <div className={s.workerQueueGrid}>
+        {['pending', 'running', 'done', 'failed', 'skipped'].map(st => {
+          const cnt = queue.find(q => q.status === st)?.cnt || 0
+          return (
+            <div key={st} className={s.workerQueueCard}>
+              <div className={s.workerQueueCnt} style={{ color: Q_COLOR[st] }}>{cnt}</div>
+              <div className={s.workerQueueLabel}>{st}</div>
+            </div>
+          )
+        })}
+      </div>
+
+      {pending > 0 && !anyOnline && (
+        <div className={s.errorBox} style={{ marginTop: 8 }}>
+          ⚠ Có {pending} job đang pending nhưng worker không online. Kiểm tra worker-enroll trên f87.
+        </div>
+      )}
+      {pending > 0 && anyOnline && (
+        <div className={s.resultBox} style={{ marginTop: 8 }}>
+          ✓ Worker online — {pending} job pending sẽ được xử lý trong vài phút tới.
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────
 const TABS = [
   { id: 'sessions',  label: 'Sessions' },
   { id: 'profiles',  label: 'Profiles' },
   { id: 'occupancy', label: 'Occupancy' },
   { id: 'jobs',      label: 'Jobs' },
+  { id: 'worker',    label: 'Worker' },
 ]
 
 export default function Enroll() {
@@ -1158,9 +1302,8 @@ export default function Enroll() {
               className={`${s.tabBtn} ${tab === t.id ? s.tabActive : ''}`}
               onClick={() => setTab(t.id)}>
               {t.label}
-              {t.id === 'jobs' && failedJobs > 0 && (
-                <span className={s.tabDot} />
-              )}
+              {t.id === 'jobs'   && failedJobs > 0 && <span className={s.tabDot} />}
+              {t.id === 'worker' && runningJobs > 0 && <span className={s.tabDotBlue} />}
             </button>
           ))}
         </div>
@@ -1171,6 +1314,7 @@ export default function Enroll() {
         {tab === 'profiles'  && <ProfilesTab />}
         {tab === 'occupancy' && <OccupancyTab />}
         {tab === 'jobs'      && <JobsTab onRefreshStats={loadStats} />}
+        {tab === 'worker'    && <WorkerTab queue={queue} />}
       </div>
 
       {showBackfill && <BackfillModal onClose={() => setBackfill(false)} />}
