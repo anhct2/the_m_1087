@@ -389,15 +389,16 @@ def backfill(body: dict, _=Depends(require_auth)):
                 # Outgoing: dùng gate_sessions (door opens không có unlock)
                 # unlock_id = NULL nên dùng door_id làm unlock_id key để tránh NULL
                 # Clip lookup sẽ dùng session_id = door_id thay vì unlock_id
+                # LEFT JOIN LATERAL: không bỏ session nếu clips chưa có label 'P.%'
                 room_join_filter = "AND gsc.label = %(room)s" if room else ""
                 cur.execute(f"""
                     SELECT DISTINCT ON (gs.door_id)
-                        gs.door_id::text  AS door_id,
-                        gs.door_id::text  AS unlock_id,
+                        gs.door_id::text                        AS door_id,
+                        gs.door_id::text                        AS unlock_id,
                         gs.event_time_vn,
-                        gsc_label.label   AS room_label
+                        COALESCE(gsc_label.label, '')           AS room_label
                     FROM gate_sessions gs
-                    JOIN LATERAL (
+                    LEFT JOIN LATERAL (
                         SELECT gsc.label
                         FROM gate_session_clips gsc
                         WHERE gsc.session_id = gs.door_id
@@ -407,11 +408,25 @@ def backfill(body: dict, _=Depends(require_auth)):
                     ) gsc_label ON true
                     WHERE gs.direction = 'outgoing'
                       AND gs.event_time_vn >= now() - (%(days)s || ' days')::interval
+                      -- Phải có ít nhất 1 clip (dù label rỗng)
+                      AND EXISTS (
+                          SELECT 1 FROM gate_session_clips gsc2
+                          WHERE gsc2.session_id = gs.door_id
+                            AND gsc2.direction  = 'outgoing'
+                      )
+                      -- Bỏ qua nếu đang pending/running
                       AND NOT EXISTS (
                           SELECT 1 FROM enroll.job_queue jq
                           WHERE jq.door_id   = gs.door_id::text
                             AND jq.direction = 'outgoing'
-                            AND jq.status IN ('pending','running','done')
+                            AND jq.status IN ('pending','running')
+                      )
+                      -- Bỏ qua nếu đã nhận diện được người (recognized_person_id IS NOT NULL)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM enroll.enroll_sessions es
+                          WHERE es.door_id   = gs.door_id::text
+                            AND es.direction = 'outgoing'
+                            AND es.recognized_person_id IS NOT NULL
                       )
                     ORDER BY gs.door_id, gs.event_time_vn DESC
                 """, params)

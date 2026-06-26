@@ -52,16 +52,16 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
 
             # Outgoing: dùng gate_sessions (door_opens không có unlock).
             # unlock_id = NULL trên VPS → dùng door_id làm unlock_id key.
-            # Chỉ enqueue khi có clip tương ứng trong gate_session_clips.
+            # LEFT JOIN LATERAL: không bỏ session nếu clips chưa có label 'P.%'.
             cur.execute("""
                 SELECT DISTINCT ON (gs.door_id)
-                    gs.door_id::text  AS door_id,
-                    gs.door_id::text  AS unlock_id,
+                    gs.door_id::text                  AS door_id,
+                    gs.door_id::text                  AS unlock_id,
                     gs.event_time_vn,
-                    gsc_label.label   AS room_label,
-                    'outgoing'::text  AS direction
+                    COALESCE(gsc_label.label, '')     AS room_label,
+                    'outgoing'::text                  AS direction
                 FROM gate_sessions gs
-                JOIN LATERAL (
+                LEFT JOIN LATERAL (
                     SELECT gsc.label
                     FROM gate_session_clips gsc
                     WHERE gsc.session_id = gs.door_id
@@ -70,6 +70,11 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
                 ) gsc_label ON true
                 WHERE gs.direction = 'outgoing'
                   AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
+                  AND EXISTS (
+                      SELECT 1 FROM gate_session_clips gsc2
+                      WHERE gsc2.session_id = gs.door_id
+                        AND gsc2.direction  = 'outgoing'
+                  )
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
                       WHERE jq.door_id   = gs.door_id::text
