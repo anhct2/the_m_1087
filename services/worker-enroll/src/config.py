@@ -58,11 +58,13 @@ SAMPLE_FPS       = 1.0
 EARLY_EXIT_SCORE = 0.85
 
 # ── Worker ───────────────────────────────────────────────────
-POLL_INTERVAL_S  = int(os.environ.get("POLL_INTERVAL_S",  "30"))
+POLL_INTERVAL_S       = int(os.environ.get("POLL_INTERVAL_S",       "30"))
 # Đợi 90s sau gate event để Frigate finalize clip
 # Thực tế: N1 21:39:14 → S2 21:39:52 = 38s, thêm 50s buffer
-JOB_DELAY_S      = int(os.environ.get("JOB_DELAY_S",      "90"))
-MAX_CONCURRENT   = int(os.environ.get("MAX_CONCURRENT",    "2"))
+JOB_DELAY_S           = int(os.environ.get("JOB_DELAY_S",           "90"))
+# Outgoing cần nhiều thời gian hơn: clip S2→N1 ~40s + finalize buffer
+OUTGOING_JOB_DELAY_S  = int(os.environ.get("OUTGOING_JOB_DELAY_S",  "150"))
+MAX_CONCURRENT        = int(os.environ.get("MAX_CONCURRENT",         "2"))
 STUCK_TIMEOUT_M  = 30
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")

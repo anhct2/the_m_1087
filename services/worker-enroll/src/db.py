@@ -102,7 +102,7 @@ def get_gate_clips(door_id: str, unlock_id: str,
                     FROM gate_session_clips gsc
                     WHERE gsc.session_id = %(did)s::bigint
                       AND gsc.direction  = 'outgoing'
-                    ORDER BY COALESCE(gsc.frigate_score, 0) DESC
+                    ORDER BY gsc.clip_finalized DESC NULLS LAST, COALESCE(gsc.frigate_score, 0) DESC
                 """, {"did": door_id})
             else:
                 cur.execute("""

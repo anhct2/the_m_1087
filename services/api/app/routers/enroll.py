@@ -73,10 +73,18 @@ def list_sessions(
     if direction:
         filters.append("vs.direction = %(direction)s")
         params["direction"] = direction
+    filter_params = dict(params)
     params.update({"limit": limit, "offset": offset})
 
     with get_conn() as conn:
         with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT COUNT(*) AS total
+                FROM enroll.v_sessions vs
+                WHERE {' AND '.join(filters)}
+            """, filter_params)
+            total = cur.fetchone()["total"]
+
             cur.execute(f"""
                 SELECT vs.id, vs.job_id, vs.room_label, vs.event_time_vn, vs.status,
                        vs.direction,
@@ -100,7 +108,7 @@ def list_sessions(
                 LIMIT %(limit)s OFFSET %(offset)s
             """, params)
             rows = cur.fetchall()
-    return [dict(r) for r in rows]
+    return {"items": [dict(r) for r in rows], "total": total}
 
 
 # ── Session by unlock_id (gate-log cross-link) ──────────────────

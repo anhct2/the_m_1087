@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { getSessions, getSessionClips, getEnrollByUnlockAll } from '../api/client'
+import { getSessions, getSessionClips, getEnrollByUnlockAll, assignSession, searchProfiles } from '../api/client'
 import { Icon, DirBadge, MethodTag, Spinner, Empty, ColHead } from '../components/UI'
 import s from './GateLog.module.css'
 
@@ -238,17 +238,22 @@ function CamPane({ camera, eventId, clipUrl, finalized }) {
 }
 
 /* ── Detail panel ─────────────────────────────────────────────── */
-function DetailPanel({ sessionId, sessionDir, unlockId }) {
+function DetailPanel({ sessionId, sessionDir, enrollKey }) {
   const navigate  = useNavigate()
-  const [clips,      setClips]   = useState(null)
-  const [showAll,    setShowAll] = useState(false)
-  const [loading,    setLoading] = useState(false)
-  const [enrollInfo, setEnroll]  = useState(null)   // { incoming: {...}, outgoing: {...} }
+  const [clips,       setClips]   = useState(null)
+  const [showAll,     setShowAll] = useState(false)
+  const [loading,     setLoading] = useState(false)
+  const [enrollInfo,  setEnroll]  = useState(null)
+  const [showAssign,  setShowAssign] = useState(false)
+  const [assignQ,     setAssignQ]   = useState('')
+  const [assignRes,   setAssignRes] = useState([])
+  const [assigning,   setAssigning] = useState(false)
+  const assignTimer = useRef(null)
 
   useEffect(() => {
     if (!sessionId) return
     let cancelled = false
-    setLoading(true); setClips(null); setShowAll(false); setEnroll(null)
+    setLoading(true); setClips(null); setShowAll(false); setEnroll(null); setShowAssign(false)
     getSessionClips(sessionId)
       .then(r => { if (!cancelled) setClips(r.data) })
       .catch(() => { if (!cancelled) setClips([]) })
@@ -256,14 +261,35 @@ function DetailPanel({ sessionId, sessionDir, unlockId }) {
     return () => { cancelled = true }
   }, [sessionId])
 
-  useEffect(() => {
-    if (!unlockId) { setEnroll(null); return }
-    let cancelled = false
-    getEnrollByUnlockAll(unlockId)
-      .then(r => { if (!cancelled) setEnroll(r.data || {}) })
+  const reloadEnroll = useCallback((key) => {
+    if (!key) { setEnroll(null); return }
+    getEnrollByUnlockAll(key)
+      .then(r => setEnroll(r.data || {}))
       .catch(() => {})
-    return () => { cancelled = true }
-  }, [unlockId])
+  }, [])
+
+  useEffect(() => { reloadEnroll(enrollKey) }, [enrollKey, reloadEnroll])
+
+  useEffect(() => {
+    if (!showAssign) return
+    clearTimeout(assignTimer.current)
+    assignTimer.current = setTimeout(async () => {
+      try { const { data } = await searchProfiles(assignQ); setAssignRes(data) } catch {}
+    }, 250)
+    return () => clearTimeout(assignTimer.current)
+  }, [assignQ, showAssign])
+
+  const doAssign = async (profileId) => {
+    if (!enrollInfo?.outgoing?.id) return
+    setAssigning(true)
+    try {
+      await assignSession(enrollInfo.outgoing.id, { profile_id: profileId })
+      setShowAssign(false)
+      reloadEnroll(enrollKey)
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Lỗi khi gán')
+    } finally { setAssigning(false) }
+  }
 
   if (!sessionId) return (
     <div className={s.detEmpty}>
@@ -333,11 +359,43 @@ function DetailPanel({ sessionId, sessionDir, unlockId }) {
                       : ''}
                   </span>
                 ) : (
-                  <span style={{ color: 'var(--tmd)' }}>
+                  <span style={{ color: 'var(--tmd)', display:'inline-flex', alignItems:'center', gap:6 }}>
                     {enrollInfo.outgoing.status} · chưa nhận diện
+                    <button
+                      style={{ fontSize:10, padding:'2px 6px', background:'var(--su)', color:'var(--tx)', border:'1px solid var(--bd)', borderRadius:4, cursor:'pointer' }}
+                      onClick={() => { setShowAssign(v => !v); setAssignQ(''); setAssignRes([]) }}
+                    >
+                      {showAssign ? 'Đóng' : 'Gán người'}
+                    </button>
                   </span>
                 )}
               </span>
+            </div>
+          )}
+          {showAssign && enrollInfo?.outgoing && !enrollInfo.outgoing.recognized_name && (
+            <div style={{ gridColumn:'1/-1', margin:'4px 0', background:'var(--su)', border:'1px solid var(--bd)', borderRadius:6, padding:10 }}>
+              <input
+                autoFocus
+                style={{ width:'100%', background:'var(--bg)', color:'var(--tx)', border:'1px solid var(--bd)', borderRadius:4, padding:'4px 8px', fontSize:12, boxSizing:'border-box' }}
+                placeholder="Tìm theo tên hoặc phòng…"
+                value={assignQ}
+                onChange={e => setAssignQ(e.target.value)}
+              />
+              <div style={{ maxHeight:150, overflowY:'auto', marginTop:6 }}>
+                {assignRes.length === 0 && <div style={{ fontSize:11, color:'var(--tmd)', padding:'4px 0' }}>Không tìm thấy</div>}
+                {assignRes.map(p => (
+                  <div key={p.id}
+                    style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 4px', cursor:'pointer', borderRadius:4 }}
+                    onMouseEnter={e => e.currentTarget.style.background='var(--hv)'}
+                    onMouseLeave={e => e.currentTarget.style.background=''}
+                    onClick={() => doAssign(p.id)}
+                  >
+                    <span style={{ fontSize:11, fontWeight:600 }}>{p.display_name || `?${p.id.slice(0,6)}`}</span>
+                    <span style={{ fontSize:10, color:'var(--tmd)' }}>{p.known_room}</span>
+                    {assigning && <Spinner size={10} />}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -560,7 +618,11 @@ export default function GateLog() {
                 key={`${sess.session_id}-${sess.event_time_local}`}
                 session={sess}
                 selected={selSess?.id === sess.session_id}
-                onClick={() => setSelSess({ id: sess.session_id, direction: sess.direction, unlock_id: sess.unlock_id })}
+                onClick={() => setSelSess({
+                  id: sess.session_id,
+                  direction: sess.direction,
+                  enrollKey: sess.direction === 'outgoing' ? String(sess.session_id) : sess.unlock_id,
+                })}
                 onThumbClick={camera => setLb({ idx, camera })}
               />
             ))}
@@ -588,7 +650,7 @@ export default function GateLog() {
 
         <div className={s.detCol}>
           <ColHead title="Chi tiết sự kiện" right={selSess ? `Session #${selSess.id}` : 'Chọn sự kiện bên trái'} />
-          <DetailPanel sessionId={selSess?.id} sessionDir={selSess?.direction} unlockId={selSess?.unlock_id} />
+          <DetailPanel sessionId={selSess?.id} sessionDir={selSess?.direction} enrollKey={selSess?.enrollKey} />
         </div>
       </div>
 
