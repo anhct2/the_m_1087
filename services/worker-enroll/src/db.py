@@ -276,7 +276,7 @@ def create_session(job_id: int, door_id: str, unlock_id: str,
 
 def update_session(sid: str, **kw) -> None:
     allowed = {
-        "status","person_count","persons_enrolled","overall_quality",
+        "status","room_label","person_count","persons_enrolled","overall_quality",
         "best_face_score","stopped_at_cam","used_video",
         "fetch_ms","extract_ms","total_ms","error_msg","warnings",
         "recognized_person_id","recognition_sim",
@@ -321,20 +321,31 @@ def save_clip_result(sid: str, camera_id: str, camera_order: int,
 
 
 def find_best_profile_match(face_emb: List[float],
-                            threshold: float = 0.55) -> Optional[Tuple[str, float]]:
-    """Tìm profile tốt nhất trong TOÀN BỘ profiles (dùng cho outgoing recognition)."""
+                            exit_ts,
+                            threshold: float = 0.55) -> Optional[Tuple[str, float, str]]:
+    """Tìm profile tốt nhất trong số những người đang ở (room_stay mở, entry < exit_ts).
+
+    Chỉ match người thực sự đang trong tòa nhà tại thời điểm exit_ts.
+    Trả về (person_id, similarity, known_room) hoặc None.
+    """
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
-                FROM enroll.person_profiles
-                WHERE face_embedding IS NOT NULL AND is_active = true
-                ORDER BY face_embedding<=>%(emb)s::vector
+                SELECT pp.id,
+                       1-(pp.face_embedding<=>%(emb)s::vector) AS sim,
+                       pp.known_room
+                FROM enroll.person_profiles pp
+                JOIN enroll.room_stays rs ON rs.person_id = pp.id
+                WHERE pp.face_embedding IS NOT NULL
+                  AND pp.is_active = true
+                  AND rs.exit_ts IS NULL
+                  AND rs.entry_ts < %(exit_ts)s
+                ORDER BY pp.face_embedding<=>%(emb)s::vector
                 LIMIT 1
-            """, {"emb": face_emb})
+            """, {"emb": face_emb, "exit_ts": exit_ts})
             row = cur.fetchone()
             if row and row["sim"] >= threshold:
-                return row["id"], float(row["sim"])
+                return row["id"], float(row["sim"]), row["known_room"]
             return None
 
 
