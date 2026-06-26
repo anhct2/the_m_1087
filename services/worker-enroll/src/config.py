@@ -20,11 +20,11 @@ FRIGATE_PASS = os.environ.get("FRIGATE_PASS", "")
 
 WORKER_ID = os.environ.get("WORKER_ID", "worker-enroll-f87")
 
-# ── Camera order: N1 → S1 → S2 ──────────────────────────────
-# N1: nhìn thẳng mặt người bấm mã → face tốt nhất
-# S1: người đi qua sảnh → body + face
-# S2: lên cầu thang → toàn thân rõ nhất
-CAMERA_ORDER: List[str] = ["N1", "S1", "S2"]
+# ── Camera order ────────────────────────────────────────────
+# Incoming: N1 nhìn thẳng mặt → S1 → S2 lên cầu thang
+# Outgoing: S2 (cầu thang xuống) → S1 → N1 (ra cổng ngoài)
+CAMERA_ORDER:          List[str] = ["N1", "S1", "S2"]
+OUTGOING_CAMERA_ORDER: List[str] = ["S2", "S1", "N1"]
 
 @dataclass(frozen=True)
 class CamCfg:
@@ -47,7 +47,8 @@ CONF_LOW    = 0.25
 
 FACE_CONFIDENT    = 0.45   # det_score >= này: dùng embedding
 FACE_POSSIBLE     = 0.30   # det_score >= này: lưu, flag thấp
-MERGE_FACE_SIM    = 0.40   # cosine sim >= này: same person → merge
+MERGE_FACE_SIM    = 0.40   # cosine sim >= này: same person → merge (incoming)
+RECOGNIZE_SIM_MIN = 0.55   # cosine sim >= này: accept match (outgoing recognition)
 
 SNAP_OK_THRESHOLD = 0.65   # snapshot đủ tốt → skip video
 

@@ -55,31 +55,39 @@ def enroll_summary(_=Depends(require_auth)):
 # ── Sessions list ────────────────────────────────────────────────
 @router.get("/sessions")
 def list_sessions(
-    room:   Optional[str] = None,
-    status: Optional[str] = None,
-    limit:  int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    room:      Optional[str] = None,
+    status:    Optional[str] = None,
+    direction: Optional[str] = None,
+    limit:     int = Query(50, ge=1, le=200),
+    offset:    int = Query(0, ge=0),
     _=Depends(require_auth),
 ):
     filters = ["1=1"]
     params  = {}
     if room:
-        filters.append("room_label = %(room)s")
+        filters.append("vs.room_label = %(room)s")
         params["room"] = room
     if status:
-        filters.append("status = %(status)s")
+        filters.append("vs.status = %(status)s")
         params["status"] = status
+    if direction:
+        filters.append("vs.direction = %(direction)s")
+        params["direction"] = direction
     params.update({"limit": limit, "offset": offset})
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"""
                 SELECT vs.id, vs.job_id, vs.room_label, vs.event_time_vn, vs.status,
+                       vs.direction,
                        vs.person_count, vs.persons_enrolled,
+                       vs.recognized_person_id, vs.recognition_sim,
+                       vs.recognized_name, vs.recognized_room, vs.recognized_gender,
+                       vs.recognized_face_event_id,
                        vs.overall_quality, vs.best_face_score,
                        vs.stopped_at_cam, vs.used_video, vs.total_ms,
                        vs.error_msg, vs.warnings, vs.created_at,
-                       vs.direction, vs.user_name, vs.method,
+                       vs.user_name, vs.method,
                        (SELECT ccr.frigate_event_id
                         FROM enroll.camera_clip_results ccr
                         WHERE ccr.enroll_session_id = vs.id
@@ -99,16 +107,27 @@ def list_sessions(
 # Must be BEFORE /sessions/{session_id} so FastAPI doesn't treat "by-unlock" as session_id
 @router.get("/sessions/by-unlock/{unlock_id}")
 def get_session_by_unlock(unlock_id: str, _=Depends(require_auth)):
+    """Trả về cả incoming (enrollment) và outgoing (recognition) cho một unlock_id."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, status, person_count, persons_enrolled
-                FROM enroll.enroll_sessions
-                WHERE unlock_id = %(uid)s
-                LIMIT 1
+                SELECT es.id, es.status, es.direction,
+                       es.person_count, es.persons_enrolled,
+                       es.recognized_person_id, es.recognition_sim,
+                       pp.display_name AS recognized_name,
+                       pp.known_room   AS recognized_room,
+                       pp.gender       AS recognized_gender
+                FROM enroll.enroll_sessions es
+                LEFT JOIN enroll.person_profiles pp ON pp.id = es.recognized_person_id
+                WHERE es.unlock_id = %(uid)s
+                ORDER BY es.direction
             """, {"uid": unlock_id})
-            row = cur.fetchone()
-    return dict(row) if row else {}
+            rows = cur.fetchall()
+    result = {}
+    for row in rows:
+        d = dict(row)
+        result[d["direction"]] = d
+    return result
 
 
 # ── Session detail ───────────────────────────────────────────────
@@ -116,8 +135,16 @@ def get_session_by_unlock(unlock_id: str, _=Depends(require_auth)):
 def get_session(session_id: str, _=Depends(require_auth)):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM enroll.v_sessions WHERE id = %(sid)s",
+            cur.execute("""
+                SELECT vs.*,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.camera_clip_results ccr
+                        WHERE ccr.enroll_session_id = vs.id
+                          AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS snap_event_id
+                FROM enroll.v_sessions vs WHERE vs.id = %(sid)s
+            """,
                 {"sid": session_id}
             )
             row = cur.fetchone()
@@ -321,7 +348,7 @@ def list_jobs(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"""
-                SELECT id, room_label, event_time_vn, status,
+                SELECT id, room_label, event_time_vn, status, direction,
                        attempt_count, max_attempts, last_error,
                        scheduled_at, started_at, finished_at, locked_by
                 FROM enroll.job_queue
@@ -337,12 +364,13 @@ def list_jobs(
 def backfill(body: dict, _=Depends(require_auth)):
     """
     Enqueue lại các gate events chưa có job.
-    Body: { "days": 7, "room": "P.302" (optional) }
+    Body: { "days": 7, "room": "P.302" (optional), "direction": "incoming" (optional) }
     """
-    days = int(body.get("days", 7))
-    room = body.get("room", "").strip() or None
+    days      = int(body.get("days", 7))
+    room      = body.get("room", "").strip() or None
+    direction = body.get("direction", "incoming")
 
-    extra = "AND gs.label = %(room)s" if room else ""
+    room_filter = "AND gs.label = %(room)s" if room else ""
     params: dict = {"days": str(days)}
     if room:
         params["room"] = room
@@ -350,38 +378,62 @@ def backfill(body: dict, _=Depends(require_auth)):
     with get_conn() as conn:
         conn.autocommit = False
         with conn.cursor() as cur:
-            cur.execute(f"""
-                SELECT gs.door_id, gs.unlock_id,
-                       gs.event_time_vn, gs.label AS room_label
-                FROM gate_sessions gs
-                WHERE gs.method   = 'password'
-                  AND gs.label    LIKE 'P.%%'
-                  AND gs.event_time_vn >= now() - (%(days)s || ' days')::interval
-                  {extra}
-                  AND NOT EXISTS (
-                      SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gs.door_id::text
-                        AND jq.unlock_id = gs.unlock_id::text
-                        AND jq.status IN ('pending','running','done')
-                  )
-            """, params)
+            if direction == "outgoing":
+                cur.execute(f"""
+                    SELECT DISTINCT ON (session_id, unlock_id)
+                        session_id::text AS door_id,
+                        unlock_id::text  AS unlock_id,
+                        event_time_vn,
+                        label AS room_label
+                    FROM gate_session_clips gsc
+                    WHERE gsc.direction  = 'outgoing'
+                      AND gsc.label      LIKE 'P.%%'
+                      AND gsc.event_time_vn >= now() - (%(days)s || ' days')::interval
+                      {room_filter.replace('gs.label','gsc.label')}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM enroll.job_queue jq
+                          WHERE jq.door_id   = gsc.session_id::text
+                            AND jq.unlock_id = gsc.unlock_id::text
+                            AND jq.direction = 'outgoing'
+                            AND jq.status IN ('pending','running','done')
+                      )
+                    ORDER BY session_id, unlock_id, event_time_vn DESC
+                """, params)
+            else:
+                cur.execute(f"""
+                    SELECT gs.door_id, gs.unlock_id,
+                           gs.event_time_vn, gs.label AS room_label
+                    FROM gate_sessions gs
+                    WHERE gs.method   = 'password'
+                      AND gs.label    LIKE 'P.%%'
+                      AND gs.direction = 'incoming'
+                      AND gs.event_time_vn >= now() - (%(days)s || ' days')::interval
+                      {room_filter}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM enroll.job_queue jq
+                          WHERE jq.door_id   = gs.door_id::text
+                            AND jq.unlock_id = gs.unlock_id::text
+                            AND jq.direction = 'incoming'
+                            AND jq.status IN ('pending','running','done')
+                      )
+                """, params)
             rows = cur.fetchall()
 
             count = 0
             for r in rows:
                 cur.execute("""
                     INSERT INTO enroll.job_queue
-                        (door_id, unlock_id, event_time_vn, room_label,
+                        (door_id, unlock_id, event_time_vn, room_label, direction,
                          status, scheduled_at)
-                    VALUES (%(d)s, %(u)s, %(t)s, %(r)s, 'pending', now())
-                    ON CONFLICT (door_id, unlock_id) DO NOTHING
+                    VALUES (%(d)s, %(u)s, %(t)s, %(r)s, %(dir)s, 'pending', now())
+                    ON CONFLICT (door_id, unlock_id, direction) DO NOTHING
                 """, {"d": str(r["door_id"]), "u": str(r["unlock_id"]),
-                      "t": r["event_time_vn"], "r": r["room_label"]})
+                      "t": r["event_time_vn"], "r": r["room_label"], "dir": direction})
                 if cur.rowcount:
                     count += 1
         conn.commit()
 
-    return {"enqueued": count, "total_found": len(rows)}
+    return {"enqueued": count, "total_found": len(rows), "direction": direction}
 
 
 # ── Cancel job ───────────────────────────────────────────────────
@@ -474,7 +526,8 @@ def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
         conn.autocommit = False
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT room_label FROM enroll.enroll_sessions WHERE id = %(id)s",
+                "SELECT room_label, direction, event_time_vn, door_id, unlock_id "
+                "FROM enroll.enroll_sessions WHERE id = %(id)s",
                 {"id": session_id}
             )
             ses = cur.fetchone()
@@ -497,12 +550,27 @@ def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
                 ON CONFLICT (person_id, enroll_session_id) DO NOTHING
             """, {"pid": profile_id, "sid": session_id})
 
-            cur.execute("""
-                UPDATE enroll.enroll_sessions
-                SET status = 'enrolled',
-                    persons_enrolled = GREATEST(persons_enrolled, 1)
-                WHERE id = %(id)s
-            """, {"id": session_id})
+            if ses["direction"] == "outgoing":
+                # Gán nhận diện và đóng room_stay
+                cur.execute("""
+                    UPDATE enroll.enroll_sessions
+                    SET status               = 'enrolled',
+                        persons_enrolled     = GREATEST(persons_enrolled, 1),
+                        recognized_person_id = %(pid)s,
+                        recognition_sim      = 1.0
+                    WHERE id = %(id)s
+                """, {"pid": profile_id, "id": session_id})
+                cur.execute(
+                    "SELECT enroll.close_room_stay(%s, %s, %s, %s, 'manual') AS n",
+                    (profile_id, ses["event_time_vn"], ses["door_id"], ses["unlock_id"])
+                )
+            else:
+                cur.execute("""
+                    UPDATE enroll.enroll_sessions
+                    SET status = 'enrolled',
+                        persons_enrolled = GREATEST(persons_enrolled, 1)
+                    WHERE id = %(id)s
+                """, {"id": session_id})
 
             cur.execute("""
                 UPDATE enroll.person_profiles
