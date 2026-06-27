@@ -64,6 +64,12 @@ def list_sessions(
                     b.direction, b.user_name, b.label, b.method, b.camera,
                     b.frigate_event_id, b.frigate_score, b.delta_seconds,
                     b.clip_finalized, b.codec, b.snapshot_url, b.clip_url, b.match_score,
+                    -- enroll_key: key để tra enroll session tương ứng
+                    -- incoming → unlock_id (text); outgoing → VN-minute bucket
+                    CASE WHEN b.direction = 'outgoing'
+                         THEN to_char(date_trunc('minute', b.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh'), 'YYYY-MM-DD HH24:MI:SS')
+                         ELSE b.unlock_id::text
+                    END AS enroll_key,
                     (SELECT frigate_event_id FROM gate_session_clips x
                      WHERE x.event_time_vn = b.event_time_vn AND x.direction = b.direction
                        AND x.camera = 'N1' ORDER BY x.match_score ASC LIMIT 1) AS event_id_n1,

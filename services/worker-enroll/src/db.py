@@ -50,37 +50,39 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
             """, {"m": str(since_min)})
             incoming = [dict(r) for r in cur.fetchall()]
 
-            # Outgoing: dùng gate_sessions (door_opens không có unlock).
-            # unlock_id = NULL trên VPS → dùng door_id làm unlock_id key.
-            # LEFT JOIN LATERAL: không bỏ session nếu clips chưa có label 'P.%'.
+            # Outgoing: mỗi (session_id, phút) = 1 người ra → dùng time_bucket làm unlock_id
+            # để số job = số gate log events (không gộp chung 1 session_id cho cả ngày).
             cur.execute("""
-                SELECT DISTINCT ON (gs.door_id)
-                    gs.door_id::text                  AS door_id,
-                    gs.door_id::text                  AS unlock_id,
-                    gs.event_time_vn,
-                    COALESCE(gsc_label.label, '')     AS room_label,
-                    'outgoing'::text                  AS direction
-                FROM gate_sessions gs
-                LEFT JOIN LATERAL (
-                    SELECT gsc.label
-                    FROM gate_session_clips gsc
-                    WHERE gsc.session_id = gs.door_id::bigint
-                      AND gsc.label LIKE 'P.%%'
-                    LIMIT 1
-                ) gsc_label ON true
-                WHERE gs.direction = 'outgoing'
-                  AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
-                  AND EXISTS (
-                      SELECT 1 FROM gate_session_clips gsc2
-                      WHERE gsc2.session_id = gs.door_id::bigint
-                        AND gsc2.direction  = 'outgoing'
-                  )
+                SELECT DISTINCT ON (gsc.session_id, date_trunc('minute', gsc.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh'))
+                    gsc.session_id::text AS door_id,
+                    to_char(
+                        date_trunc('minute', gsc.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+                        'YYYY-MM-DD HH24:MI:SS'
+                    )                   AS unlock_id,
+                    gsc.event_time_vn,
+                    COALESCE(
+                        (SELECT label FROM gate_session_clips g2
+                         WHERE g2.session_id  = gsc.session_id
+                           AND date_trunc('minute', g2.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                               = date_trunc('minute', gsc.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                           AND g2.label LIKE 'P.%%'
+                         LIMIT 1), ''
+                    )                   AS room_label,
+                    'outgoing'::text    AS direction
+                FROM gate_session_clips gsc
+                WHERE gsc.direction    = 'outgoing'
+                  AND gsc.event_time_vn >= now() - (%(m)s || ' minutes')::interval
                   AND NOT EXISTS (
                       SELECT 1 FROM enroll.job_queue jq
-                      WHERE jq.door_id   = gs.door_id::text
+                      WHERE jq.door_id   = gsc.session_id::text
+                        AND jq.unlock_id = to_char(
+                            date_trunc('minute', gsc.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+                            'YYYY-MM-DD HH24:MI:SS')
                         AND jq.direction = 'outgoing'
                   )
-                ORDER BY gs.door_id, gs.event_time_vn DESC
+                ORDER BY gsc.session_id,
+                         date_trunc('minute', gsc.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+                         gsc.event_time_vn DESC
             """, {"m": str(since_min)})
             outgoing = [dict(r) for r in cur.fetchall()]
 
@@ -97,6 +99,8 @@ def get_gate_clips(door_id: str, unlock_id: str,
     with get_conn() as conn:
         with conn.cursor() as cur:
             if direction == 'outgoing':
+                # unlock_id = VN minute bucket e.g. '2026-06-27 10:30:00'
+                # lấy clips của đúng phút đó thuộc session_id này
                 cur.execute("""
                     SELECT
                         gsc.id, gsc.camera,
@@ -106,9 +110,11 @@ def get_gate_clips(door_id: str, unlock_id: str,
                         gsc.frigate_score, gsc.event_time_vn
                     FROM gate_session_clips gsc
                     WHERE gsc.session_id = %(did)s::bigint
+                      AND date_trunc('minute', gsc.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                          = %(uid)s::timestamp
                       AND gsc.direction  = 'outgoing'
                     ORDER BY gsc.clip_finalized DESC NULLS LAST, COALESCE(gsc.frigate_score, 0) DESC
-                """, {"did": door_id})
+                """, {"did": door_id, "uid": unlock_id})
             else:
                 cur.execute("""
                     SELECT

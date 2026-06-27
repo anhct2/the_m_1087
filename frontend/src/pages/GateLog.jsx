@@ -623,7 +623,7 @@ export default function GateLog() {
                 onClick={() => setSelSess({
                   id: sess.session_id,
                   direction: sess.direction,
-                  enrollKey: sess.direction === 'outgoing' ? String(sess.session_id) : sess.unlock_id,
+                  enrollKey: sess.enroll_key,
                 })}
                 onThumbClick={camera => setLb({ idx, camera })}
               />
