@@ -248,7 +248,8 @@ function DetailPanel({ sessionId, sessionDir, enrollKey }) {
   const [assignQ,     setAssignQ]   = useState('')
   const [assignRes,   setAssignRes] = useState([])
   const [assigning,   setAssigning] = useState(false)
-  const assignTimer = useRef(null)
+  const assignTimer   = useRef(null)
+  const enrollGenRef  = useRef(0)
 
   useEffect(() => {
     if (!sessionId) return
@@ -263,8 +264,9 @@ function DetailPanel({ sessionId, sessionDir, enrollKey }) {
 
   const reloadEnroll = useCallback((key) => {
     if (!key) { setEnroll(null); return }
+    const gen = ++enrollGenRef.current
     getEnrollByUnlockAll(key)
-      .then(r => setEnroll(r.data || {}))
+      .then(r => { if (enrollGenRef.current === gen) setEnroll(r.data || {}) })
       .catch(() => {})
   }, [])
 
