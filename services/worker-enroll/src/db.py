@@ -332,17 +332,31 @@ def save_clip_result(sid: str, camera_id: str, camera_order: int,
 
 
 def find_best_profile_match(face_emb: List[float],
-                            threshold: float = 0.55) -> Optional[Tuple[str, float]]:
-    """Tìm profile tốt nhất trong TOÀN BỘ profiles (dùng cho outgoing recognition)."""
+                            threshold: float = 0.55,
+                            person_ids: Optional[List[str]] = None) -> Optional[Tuple[str, float]]:
+    """Tìm profile match tốt nhất.
+
+    Nếu person_ids được cung cấp, chỉ search trong tập đó (active stays).
+    """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
-                FROM enroll.person_profiles
-                WHERE face_embedding IS NOT NULL AND is_active = true
-                ORDER BY face_embedding<=>%(emb)s::vector
-                LIMIT 1
-            """, {"emb": face_emb})
+            if person_ids:
+                cur.execute("""
+                    SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
+                    FROM enroll.person_profiles
+                    WHERE id = ANY(%(pids)s)
+                      AND face_embedding IS NOT NULL AND is_active = true
+                    ORDER BY face_embedding<=>%(emb)s::vector
+                    LIMIT 1
+                """, {"emb": face_emb, "pids": person_ids})
+            else:
+                cur.execute("""
+                    SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
+                    FROM enroll.person_profiles
+                    WHERE face_embedding IS NOT NULL AND is_active = true
+                    ORDER BY face_embedding<=>%(emb)s::vector
+                    LIMIT 1
+                """, {"emb": face_emb})
             row = cur.fetchone()
             if row and row["sim"] >= threshold:
                 return row["id"], float(row["sim"])

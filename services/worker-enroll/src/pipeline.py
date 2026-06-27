@@ -227,15 +227,30 @@ def _merge_into(acc: List[PersonFeatures], new_persons: List[PersonFeatures]) ->
 def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
                      event_time_vn, room_label: str) -> None:
     """
-    Outgoing pipeline: nhận diện người rời cổng, đóng room_stay nếu match.
-    Dùng cùng extraction nhưng search toàn bộ profiles thay vì tạo mới.
+    Outgoing pipeline: nhận diện người rời cổng, match với người đang có active stay.
+    Match face chỉ trong tập người đang ở (active room_stays) → nếu match → biết phòng.
+    Fallback: nếu chỉ 1 người đang ở → suy luận họ là người ra.
     """
     t0 = time.perf_counter()
     sid = None
     try:
         sid = create_session(job_id, door_id, unlock_id, event_time_vn, room_label,
                              direction='outgoing')
-        log.info(f"[OJob#{job_id}] outgoing start room={room_label} session={sid[:8]}")
+        log.info(f"[OJob#{job_id}] outgoing start session={sid[:8]}")
+
+        # Lấy active stays tại thời điểm event → danh sách người có thể ra
+        active_stays = get_active_room_stays(event_time_vn)
+        stay_by_pid = {s["person_id"]: s for s in active_stays}
+        active_pids = list(stay_by_pid.keys())
+
+        if not active_pids:
+            log.info(f"[OJob#{job_id}] no active room_stays at {event_time_vn} → skip")
+            update_session(sid, status="no_detection", error_msg="no active stays",
+                           total_ms=int((time.perf_counter() - t0) * 1000))
+            skip_job(job_id, "no active stays")
+            return
+
+        log.info(f"[OJob#{job_id}] {len(active_pids)} active stays to match against")
 
         t_fetch = time.perf_counter()
         clips = get_gate_clips(door_id, unlock_id, direction='outgoing')
@@ -301,31 +316,34 @@ def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-        # Nhận diện: search toàn bộ profiles bằng face embedding
+        # Nhận diện: search face CHỈ TRONG active stays (người đang ở)
         best_pid = None; best_sim = 0.0
+        recognition_method = "face"
         for p in accumulated:
             if p.face_embedding is not None and p.face_quality >= FACE_POSSIBLE:
-                match = find_best_profile_match(p.face_embedding.tolist(), RECOGNIZE_SIM_MIN)
+                match = find_best_profile_match(p.face_embedding.tolist(),
+                                               RECOGNIZE_SIM_MIN, active_pids)
                 if match and match[1] > best_sim:
                     best_pid, best_sim = match[0], match[1]
 
-        # Fallback: nếu không nhận diện được mặt (camera thấy lưng),
-        # dùng room_stays đang active để suy ra người đi ra
-        recognition_method = "face"
-        if not best_pid:
-            active = get_active_room_stays(event_time_vn)
-            if len(active) == 1:
-                best_pid = active[0]["person_id"]
-                best_sim = 0.0  # sim=0 cho biết đây là suy luận, không phải face match
-                recognition_method = "room_stay_only"
-                log.info(f"[OJob#{job_id}] room_stay fallback: 1 active stay → {best_pid[:8]}")
-            elif len(active) > 1:
-                log.info(f"[OJob#{job_id}] room_stay fallback: {len(active)} active stays → ambiguous, skip")
+        matched_room = None
+        if best_pid:
+            matched_room = stay_by_pid[best_pid]["room_label"]
+            log.info(f"[OJob#{job_id}] face match {best_pid[:8]} room={matched_room} sim={best_sim:.3f}")
+        elif len(active_pids) == 1:
+            # Fallback: chỉ 1 người đang ở → suy luận họ là người đi ra
+            best_pid = active_pids[0]
+            best_sim = 0.0
+            matched_room = stay_by_pid[best_pid]["room_label"]
+            recognition_method = "room_stay_only"
+            log.info(f"[OJob#{job_id}] room_stay fallback: 1 active stay → {best_pid[:8]} room={matched_room}")
+        else:
+            log.info(f"[OJob#{job_id}] {len(active_pids)} active stays, no face match → ambiguous, skip")
 
         if best_pid:
             n = close_room_stay(best_pid, event_time_vn, door_id, unlock_id)
             log.info(f"[OJob#{job_id}] identified {best_pid[:8]} method={recognition_method} "
-                     f"sim={best_sim:.3f} closed {n} room_stay(s)")
+                     f"sim={best_sim:.3f} room={matched_room} closed {n} room_stay(s)")
             status = "enrolled"
         else:
             status = "low_quality" if best_conf >= CONF_LOW else "no_detection"
@@ -333,6 +351,7 @@ def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
         total_ms = int((time.perf_counter() - t0) * 1000)
         update_session(
             sid, status=status,
+            room_label=matched_room or room_label,
             person_count=len(accumulated),
             persons_enrolled=1 if best_pid else 0,
             overall_quality=round(best_conf, 4),
