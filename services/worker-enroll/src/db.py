@@ -64,7 +64,7 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
                 LEFT JOIN LATERAL (
                     SELECT gsc.label
                     FROM gate_session_clips gsc
-                    WHERE gsc.session_id = gs.door_id
+                    WHERE gsc.session_id = gs.door_id::bigint
                       AND gsc.label LIKE 'P.%%'
                     LIMIT 1
                 ) gsc_label ON true
@@ -72,7 +72,7 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
                   AND gs.event_time_vn >= now() - (%(m)s || ' minutes')::interval
                   AND EXISTS (
                       SELECT 1 FROM gate_session_clips gsc2
-                      WHERE gsc2.session_id = gs.door_id
+                      WHERE gsc2.session_id = gs.door_id::bigint
                         AND gsc2.direction  = 'outgoing'
                   )
                   AND NOT EXISTS (

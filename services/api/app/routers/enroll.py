@@ -401,7 +401,7 @@ def backfill(body: dict, _=Depends(require_auth)):
                     LEFT JOIN LATERAL (
                         SELECT gsc.label
                         FROM gate_session_clips gsc
-                        WHERE gsc.session_id = gs.door_id
+                        WHERE gsc.session_id = gs.door_id::bigint
                           AND gsc.label LIKE 'P.%%'
                           {room_join_filter}
                         LIMIT 1
@@ -411,7 +411,7 @@ def backfill(body: dict, _=Depends(require_auth)):
                       -- Phải có ít nhất 1 clip (dù label rỗng)
                       AND EXISTS (
                           SELECT 1 FROM gate_session_clips gsc2
-                          WHERE gsc2.session_id = gs.door_id
+                          WHERE gsc2.session_id = gs.door_id::bigint
                             AND gsc2.direction  = 'outgoing'
                       )
                       -- Bỏ qua nếu đang pending/running
