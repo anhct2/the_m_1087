@@ -25,7 +25,7 @@ from config import (
 from db import (
     get_gate_clips, create_session, update_session, save_clip_result,
     find_similar_profile, find_best_profile_match, close_room_stay,
-    upsert_profile, done_job, fail_job, skip_job,
+    get_active_room_stays, upsert_profile, done_job, fail_job, skip_job,
 )
 from extractor import Extractor, ExtractionResult, PersonFeatures
 
@@ -301,7 +301,7 @@ def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-        # Nhận diện: search toàn bộ profiles
+        # Nhận diện: search toàn bộ profiles bằng face embedding
         best_pid = None; best_sim = 0.0
         for p in accumulated:
             if p.face_embedding is not None and p.face_quality >= FACE_POSSIBLE:
@@ -309,10 +309,23 @@ def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
                 if match and match[1] > best_sim:
                     best_pid, best_sim = match[0], match[1]
 
+        # Fallback: nếu không nhận diện được mặt (camera thấy lưng),
+        # dùng room_stays đang active để suy ra người đi ra
+        recognition_method = "face"
+        if not best_pid:
+            active = get_active_room_stays(event_time_vn)
+            if len(active) == 1:
+                best_pid = active[0]["person_id"]
+                best_sim = 0.0  # sim=0 cho biết đây là suy luận, không phải face match
+                recognition_method = "room_stay_only"
+                log.info(f"[OJob#{job_id}] room_stay fallback: 1 active stay → {best_pid[:8]}")
+            elif len(active) > 1:
+                log.info(f"[OJob#{job_id}] room_stay fallback: {len(active)} active stays → ambiguous, skip")
+
         if best_pid:
             n = close_room_stay(best_pid, event_time_vn, door_id, unlock_id)
-            log.info(f"[OJob#{job_id}] identified {best_pid[:8]} sim={best_sim:.3f} "
-                     f"closed {n} room_stay(s)")
+            log.info(f"[OJob#{job_id}] identified {best_pid[:8]} method={recognition_method} "
+                     f"sim={best_sim:.3f} closed {n} room_stay(s)")
             status = "enrolled"
         else:
             status = "low_quality" if best_conf >= CONF_LOW else "no_detection"

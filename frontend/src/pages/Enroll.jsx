@@ -366,14 +366,23 @@ function SessionDetail({ d, onClose, onRetry, onAssign }) {
 
   const toGateLog = () => {
     if (!d.event_time_vn) return
-    const dateStr = new Date(d.event_time_vn).toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
-    const params = new URLSearchParams({ since: dateStr, until: dateStr })
+    const dt = new Date(d.event_time_vn)
+    const toVnStr = (ms) =>
+      new Date(ms).toLocaleString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' }).replace(' ', 'T')
     if (d.direction === 'outgoing') {
-      params.set('direction', 'outgoing')
-    } else if (d.room_label) {
-      params.set('room', d.room_label)
+      // Narrow ±5-minute window in VN time so only this specific exit event shows
+      const params = new URLSearchParams({
+        since:     toVnStr(dt.getTime() - 5 * 60000),
+        until:     toVnStr(dt.getTime() + 5 * 60000),
+        direction: 'outgoing',
+      })
+      navigate(`/gate-log?${params}`)
+    } else {
+      const dateStr = dt.toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
+      const params = new URLSearchParams({ since: dateStr, until: dateStr })
+      if (d.room_label) params.set('room', d.room_label)
+      navigate(`/gate-log?${params}`)
     }
-    navigate(`/gate-log?${params}`)
   }
 
   return (

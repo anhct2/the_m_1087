@@ -343,6 +343,22 @@ def find_best_profile_match(face_emb: List[float],
             return None
 
 
+def get_active_room_stays(at_time) -> List[dict]:
+    """Trả về các room_stays đang active tại thời điểm at_time (exit_ts IS NULL)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT rs.person_id, rs.room_id AS room_label, pp.known_room
+                FROM enroll.room_stays rs
+                JOIN enroll.person_profiles pp ON pp.id = rs.person_id
+                WHERE rs.exit_ts IS NULL
+                  AND rs.entry_ts <= %(ts)s
+                  AND pp.is_active = true
+                ORDER BY rs.entry_ts DESC
+            """, {"ts": at_time})
+            return [dict(r) for r in cur.fetchall()]
+
+
 def close_room_stay(person_id: str, exit_ts,
                     exit_door_id: str = None, exit_unlock_id: str = None) -> int:
     """Đóng room_stay (ghi exit_ts) khi nhận diện người rời phòng."""
