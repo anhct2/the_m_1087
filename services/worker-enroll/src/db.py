@@ -364,15 +364,19 @@ def find_best_profile_match(face_emb: List[float],
 
 
 def get_active_room_stays(at_time) -> List[dict]:
-    """Trả về các room_stays đang active tại thời điểm at_time (exit_ts IS NULL)."""
+    """Trả về các room_stays đang active TẠI THỜI ĐIỂM at_time.
+
+    Dùng temporal query: entry_ts <= at_time AND (exit_ts IS NULL OR exit_ts > at_time)
+    để backfill lịch sử không bị ảnh hưởng bởi người đã check-out sau đó.
+    """
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT rs.person_id, rs.room_id AS room_label, pp.known_room
                 FROM enroll.room_stays rs
                 JOIN enroll.person_profiles pp ON pp.id = rs.person_id
-                WHERE rs.exit_ts IS NULL
-                  AND rs.entry_ts <= %(ts)s
+                WHERE rs.entry_ts <= %(ts)s
+                  AND (rs.exit_ts IS NULL OR rs.exit_ts > %(ts)s)
                   AND pp.is_active = true
                 ORDER BY rs.entry_ts DESC
             """, {"ts": at_time})
