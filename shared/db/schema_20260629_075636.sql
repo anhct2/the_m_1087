@@ -1,5 +1,5 @@
 -- DB Schema Dump: m1087
--- Generated   : 2026-06-25 11:11:30
+-- Generated   : 2026-06-29 07:56:37
 -- Schemas     : public, enroll
 -- NOTE: DDL only — no data
 
@@ -48,7 +48,7 @@ CREATE TABLE "public"."gate_events" (
     "inserted_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 1,269
+-- rows: 1,745
 
 -- public.gate_session_clips
 CREATE TABLE "public"."gate_session_clips" (
@@ -81,7 +81,7 @@ CREATE TABLE "public"."gate_session_clips" (
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT now(),
     PRIMARY KEY ("id")
 );
--- rows: 2,727
+-- rows: 3,686
 
 -- public.mapping_runs
 CREATE TABLE "public"."mapping_runs" (
@@ -95,7 +95,7 @@ CREATE TABLE "public"."mapping_runs" (
     "notes" TEXT,
     PRIMARY KEY ("id")
 );
--- rows: 1,832
+-- rows: 2,942
 
 -- public.poll_state
 CREATE TABLE "public"."poll_state" (
@@ -138,7 +138,7 @@ CREATE TABLE "public"."scrape_runs" (
     "tomorrow_available" BOOLEAN,
     PRIMARY KEY ("id")
 );
--- rows: 13
+-- rows: 60
 
 -- public.unlock_map
 CREATE TABLE "public"."unlock_map" (
@@ -178,7 +178,7 @@ CREATE TABLE "enroll"."camera_clip_results" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 342
+-- rows: 769
 
 -- enroll.enroll_sessions
 CREATE TABLE "enroll"."enroll_sessions" (
@@ -202,9 +202,12 @@ CREATE TABLE "enroll"."enroll_sessions" (
     "warnings" text[],
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     "finished_at" TIMESTAMP WITH TIME ZONE,
+    "direction" TEXT DEFAULT 'incoming'::text NOT NULL,
+    "recognized_person_id" UUID,
+    "recognition_sim" DOUBLE PRECISION,
     PRIMARY KEY ("id")
 );
--- rows: 124
+-- rows: 468
 
 -- enroll.job_queue
 CREATE TABLE "enroll"."job_queue" (
@@ -225,9 +228,10 @@ CREATE TABLE "enroll"."job_queue" (
     "locked_by" TEXT,
     "locked_at" TIMESTAMP WITH TIME ZONE,
     "enroll_session_id" UUID,
+    "direction" TEXT DEFAULT 'incoming'::text NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 124
+-- rows: 468
 
 -- enroll.person_profiles
 CREATE TABLE "enroll"."person_profiles" (
@@ -252,7 +256,7 @@ CREATE TABLE "enroll"."person_profiles" (
     "is_active" BOOLEAN DEFAULT true NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 128
+-- rows: 182
 
 -- enroll.person_session_map
 CREATE TABLE "enroll"."person_session_map" (
@@ -263,7 +267,7 @@ CREATE TABLE "enroll"."person_session_map" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("person_id", "enroll_session_id")
 );
--- rows: 127
+-- rows: 262
 
 -- enroll.room_stays
 CREATE TABLE "enroll"."room_stays" (
@@ -281,7 +285,22 @@ CREATE TABLE "enroll"."room_stays" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 128
+-- rows: 182
+
+-- enroll.worker_heartbeat
+CREATE TABLE "enroll"."worker_heartbeat" (
+    "worker_id" TEXT NOT NULL,
+    "last_beat" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    "status" TEXT DEFAULT 'idle'::text NOT NULL,
+    "active_jobs" SMALLINT DEFAULT 0 NOT NULL,
+    "max_concurrent" SMALLINT DEFAULT 2 NOT NULL,
+    "poll_interval_s" SMALLINT DEFAULT 30 NOT NULL,
+    "hostname" TEXT,
+    "started_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    PRIMARY KEY ("worker_id")
+);
+-- rows: 1
 
 -- ============================================================
 --  VIEWS — schema: public
@@ -322,7 +341,7 @@ WITH unlock_events AS (
             u.raw_hex,
             'incoming'::text AS direction
            FROM door_opens d
-             JOIN unlock_events u ON u.event_time >= (d.event_time - '00:00:05'::interval) AND u.event_time <= (d.event_time + '00:00:05'::interval)
+             JOIN unlock_events u ON u.event_time >= (d.event_time - '00:00:05'::interval) AND u.event_time <= (d.event_time + '00:00:10'::interval)
           ORDER BY d.id, (abs(EXTRACT(epoch FROM u.event_time - d.event_time)))
         ), outgoing AS (
          SELECT d.id AS door_id,
@@ -488,8 +507,11 @@ SELECT es.id,
     es.room_label,
     es.event_time_vn,
     es.status,
+    es.direction,
     es.person_count,
     es.persons_enrolled,
+    es.recognized_person_id,
+    es.recognition_sim,
     es.overall_quality,
     es.best_face_score,
     es.stopped_at_cam,
@@ -498,11 +520,21 @@ SELECT es.id,
     es.error_msg,
     es.warnings,
     es.created_at,
-    gs.direction,
     gs.user_name,
-    gs.method
+    gs.method,
+    pp.display_name AS recognized_name,
+    pp.known_room AS recognized_room,
+    pp.gender AS recognized_gender,
+    pp.face_source_cam AS recognized_face_cam,
+    ( SELECT ccr2.frigate_event_id
+           FROM enroll.person_session_map psm2
+             JOIN enroll.camera_clip_results ccr2 ON ccr2.enroll_session_id = psm2.enroll_session_id
+          WHERE psm2.person_id = pp.id AND ccr2.frigate_event_id IS NOT NULL
+          ORDER BY ccr2.stopped_here DESC, ccr2.confidence DESC NULLS LAST
+         LIMIT 1) AS recognized_face_event_id
    FROM enroll.enroll_sessions es
-     LEFT JOIN gate_sessions gs ON gs.door_id::text = es.door_id AND gs.unlock_id::text = es.unlock_id;;
+     LEFT JOIN gate_sessions gs ON gs.door_id::text = es.door_id AND gs.unlock_id::text = es.unlock_id
+     LEFT JOIN enroll.person_profiles pp ON pp.id = es.recognized_person_id;;
 
 -- ============================================================
 --  INDEXES
@@ -629,6 +661,23 @@ AS $function$
     RETURNING *;
 $function$;
 
+-- enroll.close_room_stay(p_person_id uuid, p_exit_ts timestamp with time zone, p_exit_door_id text DEFAULT NULL::text, p_exit_unlock_id text DEFAULT NULL::text, p_exit_conf text DEFAULT 'camera_chain'::text)
+CREATE OR REPLACE FUNCTION enroll.close_room_stay(p_person_id uuid, p_exit_ts timestamp with time zone, p_exit_door_id text DEFAULT NULL::text, p_exit_unlock_id text DEFAULT NULL::text, p_exit_conf text DEFAULT 'camera_chain'::text)
+ RETURNS integer
+ LANGUAGE sql
+AS $function$
+    WITH r AS (
+        UPDATE enroll.room_stays SET
+            exit_ts          = p_exit_ts,
+            exit_door_id     = p_exit_door_id,
+            exit_unlock_id   = p_exit_unlock_id,
+            exit_confidence  = p_exit_conf
+        WHERE person_id = p_person_id
+          AND exit_ts IS NULL
+        RETURNING id
+    ) SELECT COUNT(*)::INT FROM r;
+$function$;
+
 -- enroll.release_stuck(p_timeout_min integer DEFAULT 30)
 CREATE OR REPLACE FUNCTION enroll.release_stuck(p_timeout_min integer DEFAULT 30)
  RETURNS integer
@@ -647,13 +696,6 @@ AS $function$
     ) SELECT COUNT(*)::INT FROM r;
 $function$;
 
--- public.array_to_halfvec(real[], integer, boolean)
-CREATE OR REPLACE FUNCTION public.array_to_halfvec(real[], integer, boolean)
- RETURNS halfvec
- LANGUAGE c
- IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$array_to_halfvec$function$;
-
 -- public.array_to_halfvec(double precision[], integer, boolean)
 CREATE OR REPLACE FUNCTION public.array_to_halfvec(double precision[], integer, boolean)
  RETURNS halfvec
@@ -661,15 +703,22 @@ CREATE OR REPLACE FUNCTION public.array_to_halfvec(double precision[], integer, 
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$array_to_halfvec$function$;
 
--- public.array_to_halfvec(numeric[], integer, boolean)
-CREATE OR REPLACE FUNCTION public.array_to_halfvec(numeric[], integer, boolean)
+-- public.array_to_halfvec(integer[], integer, boolean)
+CREATE OR REPLACE FUNCTION public.array_to_halfvec(integer[], integer, boolean)
  RETURNS halfvec
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$array_to_halfvec$function$;
 
--- public.array_to_halfvec(integer[], integer, boolean)
-CREATE OR REPLACE FUNCTION public.array_to_halfvec(integer[], integer, boolean)
+-- public.array_to_halfvec(real[], integer, boolean)
+CREATE OR REPLACE FUNCTION public.array_to_halfvec(real[], integer, boolean)
+ RETURNS halfvec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/vector', $function$array_to_halfvec$function$;
+
+-- public.array_to_halfvec(numeric[], integer, boolean)
+CREATE OR REPLACE FUNCTION public.array_to_halfvec(numeric[], integer, boolean)
  RETURNS halfvec
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
@@ -703,13 +752,6 @@ CREATE OR REPLACE FUNCTION public.array_to_sparsevec(real[], integer, boolean)
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$array_to_sparsevec$function$;
 
--- public.array_to_vector(double precision[], integer, boolean)
-CREATE OR REPLACE FUNCTION public.array_to_vector(double precision[], integer, boolean)
- RETURNS vector
- LANGUAGE c
- IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$array_to_vector$function$;
-
 -- public.array_to_vector(integer[], integer, boolean)
 CREATE OR REPLACE FUNCTION public.array_to_vector(integer[], integer, boolean)
  RETURNS vector
@@ -717,15 +759,22 @@ CREATE OR REPLACE FUNCTION public.array_to_vector(integer[], integer, boolean)
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$array_to_vector$function$;
 
--- public.array_to_vector(real[], integer, boolean)
-CREATE OR REPLACE FUNCTION public.array_to_vector(real[], integer, boolean)
+-- public.array_to_vector(numeric[], integer, boolean)
+CREATE OR REPLACE FUNCTION public.array_to_vector(numeric[], integer, boolean)
  RETURNS vector
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$array_to_vector$function$;
 
--- public.array_to_vector(numeric[], integer, boolean)
-CREATE OR REPLACE FUNCTION public.array_to_vector(numeric[], integer, boolean)
+-- public.array_to_vector(double precision[], integer, boolean)
+CREATE OR REPLACE FUNCTION public.array_to_vector(double precision[], integer, boolean)
+ RETURNS vector
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/vector', $function$array_to_vector$function$;
+
+-- public.array_to_vector(real[], integer, boolean)
+CREATE OR REPLACE FUNCTION public.array_to_vector(real[], integer, boolean)
  RETURNS vector
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
@@ -745,13 +794,6 @@ CREATE OR REPLACE FUNCTION public.binary_quantize(vector)
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$binary_quantize$function$;
 
--- public.cosine_distance(halfvec, halfvec)
-CREATE OR REPLACE FUNCTION public.cosine_distance(halfvec, halfvec)
- RETURNS double precision
- LANGUAGE c
- IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$halfvec_cosine_distance$function$;
-
 -- public.cosine_distance(sparsevec, sparsevec)
 CREATE OR REPLACE FUNCTION public.cosine_distance(sparsevec, sparsevec)
  RETURNS double precision
@@ -765,6 +807,13 @@ CREATE OR REPLACE FUNCTION public.cosine_distance(vector, vector)
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$cosine_distance$function$;
+
+-- public.cosine_distance(halfvec, halfvec)
+CREATE OR REPLACE FUNCTION public.cosine_distance(halfvec, halfvec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/vector', $function$halfvec_cosine_distance$function$;
 
 -- public.halfvec(halfvec, integer, boolean)
 CREATE OR REPLACE FUNCTION public.halfvec(halfvec, integer, boolean)
@@ -979,6 +1028,13 @@ CREATE OR REPLACE FUNCTION public.hnswhandler(internal)
  LANGUAGE c
 AS '$libdir/vector', $function$hnswhandler$function$;
 
+-- public.inner_product(vector, vector)
+CREATE OR REPLACE FUNCTION public.inner_product(vector, vector)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/vector', $function$inner_product$function$;
+
 -- public.inner_product(halfvec, halfvec)
 CREATE OR REPLACE FUNCTION public.inner_product(halfvec, halfvec)
  RETURNS double precision
@@ -992,13 +1048,6 @@ CREATE OR REPLACE FUNCTION public.inner_product(sparsevec, sparsevec)
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$sparsevec_inner_product$function$;
-
--- public.inner_product(vector, vector)
-CREATE OR REPLACE FUNCTION public.inner_product(vector, vector)
- RETURNS double precision
- LANGUAGE c
- IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$inner_product$function$;
 
 -- public.ivfflat_bit_support(internal)
 CREATE OR REPLACE FUNCTION public.ivfflat_bit_support(internal)
@@ -1025,19 +1074,19 @@ CREATE OR REPLACE FUNCTION public.jaccard_distance(bit, bit)
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$jaccard_distance$function$;
 
--- public.l1_distance(sparsevec, sparsevec)
-CREATE OR REPLACE FUNCTION public.l1_distance(sparsevec, sparsevec)
- RETURNS double precision
- LANGUAGE c
- IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$sparsevec_l1_distance$function$;
-
 -- public.l1_distance(vector, vector)
 CREATE OR REPLACE FUNCTION public.l1_distance(vector, vector)
  RETURNS double precision
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$l1_distance$function$;
+
+-- public.l1_distance(sparsevec, sparsevec)
+CREATE OR REPLACE FUNCTION public.l1_distance(sparsevec, sparsevec)
+ RETURNS double precision
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/vector', $function$sparsevec_l1_distance$function$;
 
 -- public.l1_distance(halfvec, halfvec)
 CREATE OR REPLACE FUNCTION public.l1_distance(halfvec, halfvec)
@@ -1067,13 +1116,6 @@ CREATE OR REPLACE FUNCTION public.l2_distance(halfvec, halfvec)
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$halfvec_l2_distance$function$;
 
--- public.l2_norm(halfvec)
-CREATE OR REPLACE FUNCTION public.l2_norm(halfvec)
- RETURNS double precision
- LANGUAGE c
- IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$halfvec_l2_norm$function$;
-
 -- public.l2_norm(sparsevec)
 CREATE OR REPLACE FUNCTION public.l2_norm(sparsevec)
  RETURNS double precision
@@ -1081,12 +1123,12 @@ CREATE OR REPLACE FUNCTION public.l2_norm(sparsevec)
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$sparsevec_l2_norm$function$;
 
--- public.l2_normalize(sparsevec)
-CREATE OR REPLACE FUNCTION public.l2_normalize(sparsevec)
- RETURNS sparsevec
+-- public.l2_norm(halfvec)
+CREATE OR REPLACE FUNCTION public.l2_norm(halfvec)
+ RETURNS double precision
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$sparsevec_l2_normalize$function$;
+AS '$libdir/vector', $function$halfvec_l2_norm$function$;
 
 -- public.l2_normalize(halfvec)
 CREATE OR REPLACE FUNCTION public.l2_normalize(halfvec)
@@ -1101,6 +1143,13 @@ CREATE OR REPLACE FUNCTION public.l2_normalize(vector)
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$l2_normalize$function$;
+
+-- public.l2_normalize(sparsevec)
+CREATE OR REPLACE FUNCTION public.l2_normalize(sparsevec)
+ RETURNS sparsevec
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/vector', $function$sparsevec_l2_normalize$function$;
 
 -- public.sparsevec(sparsevec, integer, boolean)
 CREATE OR REPLACE FUNCTION public.sparsevec(sparsevec, integer, boolean)
@@ -1370,19 +1419,19 @@ CREATE OR REPLACE FUNCTION public.vector_concat(vector, vector)
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$vector_concat$function$;
 
--- public.vector_dims(halfvec)
-CREATE OR REPLACE FUNCTION public.vector_dims(halfvec)
- RETURNS integer
- LANGUAGE c
- IMMUTABLE PARALLEL SAFE STRICT
-AS '$libdir/vector', $function$halfvec_vector_dims$function$;
-
 -- public.vector_dims(vector)
 CREATE OR REPLACE FUNCTION public.vector_dims(vector)
  RETURNS integer
  LANGUAGE c
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$vector_dims$function$;
+
+-- public.vector_dims(halfvec)
+CREATE OR REPLACE FUNCTION public.vector_dims(halfvec)
+ RETURNS integer
+ LANGUAGE c
+ IMMUTABLE PARALLEL SAFE STRICT
+AS '$libdir/vector', $function$halfvec_vector_dims$function$;
 
 -- public.vector_eq(vector, vector)
 CREATE OR REPLACE FUNCTION public.vector_eq(vector, vector)
@@ -1524,4 +1573,4 @@ CREATE OR REPLACE FUNCTION public.vector_typmod_in(cstring[])
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$vector_typmod_in$function$;
 
--- End of dump — 2026-06-25 11:11:30
+-- End of dump — 2026-06-29 07:56:37
