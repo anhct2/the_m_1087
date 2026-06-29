@@ -1,5 +1,5 @@
 -- DB Schema Dump: m1087
--- Generated   : 2026-06-29 07:56:37
+-- Generated   : 2026-06-29 10:05:09
 -- Schemas     : public, enroll
 -- NOTE: DDL only — no data
 
@@ -48,7 +48,7 @@ CREATE TABLE "public"."gate_events" (
     "inserted_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 1,745
+-- rows: 1,778
 
 -- public.gate_session_clips
 CREATE TABLE "public"."gate_session_clips" (
@@ -81,7 +81,7 @@ CREATE TABLE "public"."gate_session_clips" (
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT now(),
     PRIMARY KEY ("id")
 );
--- rows: 3,686
+-- rows: 3,750
 
 -- public.mapping_runs
 CREATE TABLE "public"."mapping_runs" (
@@ -95,7 +95,7 @@ CREATE TABLE "public"."mapping_runs" (
     "notes" TEXT,
     PRIMARY KEY ("id")
 );
--- rows: 2,942
+-- rows: 2,968
 
 -- public.poll_state
 CREATE TABLE "public"."poll_state" (
@@ -178,7 +178,7 @@ CREATE TABLE "enroll"."camera_clip_results" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 769
+-- rows: 790
 
 -- enroll.enroll_sessions
 CREATE TABLE "enroll"."enroll_sessions" (
@@ -207,7 +207,7 @@ CREATE TABLE "enroll"."enroll_sessions" (
     "recognition_sim" DOUBLE PRECISION,
     PRIMARY KEY ("id")
 );
--- rows: 468
+-- rows: 480
 
 -- enroll.job_queue
 CREATE TABLE "enroll"."job_queue" (
@@ -231,7 +231,7 @@ CREATE TABLE "enroll"."job_queue" (
     "direction" TEXT DEFAULT 'incoming'::text NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 468
+-- rows: 480
 
 -- enroll.person_profiles
 CREATE TABLE "enroll"."person_profiles" (
@@ -1573,4 +1573,4 @@ CREATE OR REPLACE FUNCTION public.vector_typmod_in(cstring[])
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$vector_typmod_in$function$;
 
--- End of dump — 2026-06-29 07:56:37
+-- End of dump — 2026-06-29 10:05:09

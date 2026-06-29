@@ -255,7 +255,8 @@ def main():
         out = Path(args.out)
     else:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out = Path(__file__).parent / "shared" / "db" / f"schema_{ts}.sql"
+        # out = Path(__file__).parent / "shared" / "db" / f"schema_{ts}.sql"
+        out = Path(__file__).parent / "shared" / "db" / f"schema.sql"
 
     dumper = DBSchemaDumper(args.host, args.port, args.db, args.user, args.password)
     dumper.dump(out)
