@@ -28,6 +28,10 @@ log = logging.getLogger(__name__)
 _tls        = threading.local()
 _login_lock = threading.Lock()
 
+# Track tất cả login handles để logout explicit khi shutdown
+_all_handles: set[int] = set()
+_handles_lock = threading.Lock()
+
 # Giữ callback objects để tránh GC trong khi SDK còn dùng
 _active_cbs: dict[str, object] = {}
 _cbs_lock   = threading.Lock()
@@ -54,6 +58,8 @@ def _login() -> int:
 
     thread_name = threading.current_thread().name
     log.info(f"[{thread_name}] NVR login OK  handle={login_id}")
+    with _handles_lock:
+        _all_handles.add(login_id)
     return login_id
 
 
@@ -73,7 +79,23 @@ def logout_current_thread() -> None:
             log.info(f"[{threading.current_thread().name}] NVR logout OK")
         except Exception as e:
             log.warning(f"SDK logout error: {e}")
+        with _handles_lock:
+            _all_handles.discard(handle)
         _tls.handle = None
+
+
+def logout_all() -> None:
+    """Logout tất cả handles đang active — gọi khi shutdown."""
+    sdk = get_sdk()
+    with _handles_lock:
+        handles = list(_all_handles)
+        _all_handles.clear()
+    for handle in handles:
+        try:
+            sdk.Logout(handle)
+            log.info(f"NVR logout handle={handle}")
+        except Exception as e:
+            log.warning(f"SDK logout error handle={handle}: {e}")
 
 
 # ── Download ─────────────────────────────────────────────────────────

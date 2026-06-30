@@ -114,9 +114,15 @@ def main() -> None:
     log.info("Dừng scheduler...")
     scheduler.shutdown(wait=False)
 
-    # Cleanup SDK trước để NVR giải phóng connection ngay,
-    # đồng thời unblock các thread đang chờ download
-    log.info("Cleanup SDK (logout NVR)...")
+    # Logout tất cả NVR connections trước, sau đó Cleanup SDK
+    log.info("Logout NVR connections...")
+    try:
+        from dahua.client import logout_all
+        logout_all()
+    except Exception:
+        pass
+
+    log.info("Cleanup SDK...")
     try:
         get_sdk().Cleanup()
     except Exception:
