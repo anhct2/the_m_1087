@@ -106,7 +106,7 @@ def get_ready_clips(limit: int = 4) -> list[VideoClip]:
     with db_cursor() as cur:
         cur.execute("""
             WITH locked AS (
-                SELECT clip_id
+                SELECT clip_id, request_id
                 FROM   video_clips
                 WHERE  status = 'pending'
                   AND  clip_end <= NOW()
@@ -119,9 +119,10 @@ def get_ready_clips(limit: int = 4) -> list[VideoClip]:
             SET    status     = 'downloading',
                    started_at = NOW(),
                    updated_at = NOW()
-            FROM   locked
-            JOIN   video_extraction_requests ver ON ver.request_id = vc.request_id
-            WHERE  vc.clip_id = locked.clip_id
+            FROM   locked,
+                   video_extraction_requests ver
+            WHERE  vc.clip_id      = locked.clip_id
+              AND  ver.request_id  = locked.request_id
             RETURNING
                 vc.clip_id, vc.request_id, vc.camera_id,
                 vc.clip_start, vc.clip_end, vc.retry_count,
