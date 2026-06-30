@@ -10,14 +10,14 @@ from datetime import datetime, timedelta
 # (direction, camera_id) → (offset_start_sec, offset_end_sec)
 TIME_MATRIX: dict[tuple[str, str], tuple[int, int]] = {
     # Hướng VÀO: người đi từ ngoài vào
-    ('incoming', 'N1'): (-30, +15),   # camera ngoài: thấy người sớm nhất
-    ('incoming', 'S1'): (-20, +25),   # camera giữa
-    ('incoming', 'S2'): (-15, +30),   # camera trong: thấy người muộn nhất
+    ('incoming', 'N1'): (-30, +20),   # camera ngoài: thấy người sớm nhất
+    ('incoming', 'S1'): (-10, +35),   # camera giữa
+    ('incoming', 'S2'): (-10, +35),   # camera trong: thấy người muộn nhất
 
     # Hướng RA: người đi từ trong ra
-    ('outgoing', 'S2'): (-30, +15),   # camera trong: thấy người sớm nhất
-    ('outgoing', 'S1'): (-25, +20),   # camera giữa
-    ('outgoing', 'N1'): (-15, +30),   # camera ngoài: thấy người muộn nhất
+    ('outgoing', 'S2'): (-35, +10),   # camera trong: thấy người sớm nhất
+    ('outgoing', 'S1'): (-35, +10),   # camera giữa
+    ('outgoing', 'N1'): (-10, +36),   # camera ngoài: thấy người muộn nhất
 }
 
 MAX_OFFSET_END = 30  # giây — dùng để tính scheduled_after

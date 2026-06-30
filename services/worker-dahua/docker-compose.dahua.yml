@@ -21,10 +21,8 @@ services:
       - .env
 
     volumes:
-      # Video output — có thể mount NAS hoặc disk local
-      - /data/videos:/data/videos
-      # DAV temp — dùng tmpfs để tránh wear SSD nếu nhiều
-      - /tmp/dav:/tmp/dav
+      - /mnt/nvr/m1087/videos:/mnt/nvr/m1087/videos
+      - /mnt/nvr/m1087/dav:/mnt/nvr/m1087/dav
 
     logging:
       driver: json-file
