@@ -120,10 +120,12 @@ def get_ready_clips(limit: int = 4) -> list[VideoClip]:
                    started_at = NOW(),
                    updated_at = NOW()
             FROM   locked
+            JOIN   video_extraction_requests ver ON ver.request_id = vc.request_id
             WHERE  vc.clip_id = locked.clip_id
             RETURNING
                 vc.clip_id, vc.request_id, vc.camera_id,
-                vc.clip_start, vc.clip_end, vc.retry_count
+                vc.clip_start, vc.clip_end, vc.retry_count,
+                ver.direction
         """, (limit,))
 
         return [
@@ -135,6 +137,7 @@ def get_ready_clips(limit: int = 4) -> list[VideoClip]:
                 clip_end   = r[4],
                 status     = 'downloading',
                 retry_count= r[5],
+                direction  = str(r[6]),
             )
             for r in cur.fetchall()
         ]

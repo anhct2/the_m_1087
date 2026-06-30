@@ -13,6 +13,8 @@ class VideoClip:
     status:        str          # pending | downloading | converting | completed | failed
     retry_count:   int
 
+    direction:       str                 = 'incoming'   # 'incoming' | 'outgoing'
+
     dav_temp_path:   Optional[str]      = None
     mp4_path:        Optional[str]      = None
     file_size_bytes: Optional[int]      = None

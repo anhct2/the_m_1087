@@ -142,14 +142,11 @@ def _dav_path(clip: VideoClip) -> str:
 
 
 def _mp4_path(clip: VideoClip) -> str:
-    date_str = clip.clip_start.strftime('%Y%m%d')
-    time_str = clip.clip_start.strftime('%H%M%S')
-    return os.path.join(
-        config.video_output_dir,
-        date_str,
-        clip.request_id[:8],           # folder theo request (short ID)
-        f"{clip.camera_id}_{time_str}.mp4",
-    )
+    direction = 'IN' if clip.direction == 'incoming' else 'OUT'
+    date_str  = clip.clip_start.strftime('%Y%m%d')
+    time_str  = clip.clip_start.strftime('%H%M%S')
+    filename  = f"{direction}_{clip.camera_id}_{date_str}_{time_str}.mp4"
+    return os.path.join(config.video_output_dir, date_str, clip.request_id[:8], filename)
 
 
 def _download_timeout(clip: VideoClip) -> int:
