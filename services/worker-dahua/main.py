@@ -114,14 +114,16 @@ def main() -> None:
     log.info("Dừng scheduler...")
     scheduler.shutdown(wait=False)
 
-    log.info("Dừng worker pool (chờ task đang chạy xong)...")
-    shutdown_executor(wait=True)
-
-    log.info("Cleanup SDK...")
+    # Cleanup SDK trước để NVR giải phóng connection ngay,
+    # đồng thời unblock các thread đang chờ download
+    log.info("Cleanup SDK (logout NVR)...")
     try:
         get_sdk().Cleanup()
     except Exception:
         pass
+
+    log.info("Dừng worker pool...")
+    shutdown_executor(wait=False)
 
     log.info("worker-dahua đã dừng.")
 

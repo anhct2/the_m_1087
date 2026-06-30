@@ -12,6 +12,7 @@ services:
     image: worker-dahua:latest
     container_name: worker-dahua
     restart: unless-stopped
+    stop_grace_period: 15s
 
     # network_mode: host → truy cập NVR trực tiếp qua LAN 192.168.x.x
     # (không cần expose port)
