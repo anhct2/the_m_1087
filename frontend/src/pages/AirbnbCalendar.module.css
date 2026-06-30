@@ -195,6 +195,13 @@
   font-size: 13px; font-weight: 600; color: var(--thi);
   min-width: 110px; text-align: center;
 }
+.winLabel {
+  font-size: 11.5px; font-family: var(--mono); color: var(--tmd);
+  min-width: 110px; text-align: center;
+  background: transparent; border: none; cursor: pointer; padding: 2px 4px;
+  border-radius: var(--r-sm); transition: color .12s, background .12s;
+}
+.winLabel:hover { color: var(--thi); background: var(--bg2); }
 
 /* ── Monthly calendar view ────────────────────────────────────── */
 .monthView {

@@ -82,7 +82,8 @@ export const searchProfiles    = (q)          => api.get('/api/enroll/profiles/s
 export const getEnrollByUnlock = (unlockId)   => api.get(`/api/enroll/sessions/by-unlock/${unlockId}`)
 
 // ── Airbnb ────────────────────────────────────────────────────────
-export const getAirbnbCalendar      = (days = 30)       => api.get('/api/airbnb/calendar', { params: { days } })
-export const getAirbnbCalendarMonth = (year, month)     => api.get('/api/airbnb/calendar', { params: { year, month } })
+export const getAirbnbCalendar      = (days = 30)            => api.get('/api/airbnb/calendar', { params: { days } })
+export const getAirbnbCalendarMonth = (year, month)          => api.get('/api/airbnb/calendar', { params: { year, month } })
+export const getAirbnbCalendarRange = (from_date, days)      => api.get('/api/airbnb/calendar', { params: { from_date, days } })
 
 export default api

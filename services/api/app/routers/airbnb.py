@@ -12,20 +12,25 @@ router = APIRouter()
 
 @router.get("/calendar")
 def airbnb_calendar(
-    days:  int = Query(30, ge=7, le=90),
-    month: int = Query(None, ge=1, le=12),
-    year:  int = Query(None, ge=2020, le=2099),
+    days:       int = Query(38, ge=7, le=120),
+    month:      int = Query(None, ge=1, le=12),
+    year:       int = Query(None, ge=2020, le=2099),
+    from_date:  str = Query(None),
     _=Depends(require_auth),
 ):
     """
     Trả về lịch bận/rỗi của tất cả Airbnb listings.
     - month + year → trả về cả tháng đó (kể cả ngày đã qua)
-    - chỉ days     → N ngày từ hôm nay
+    - from_date + days → N ngày từ from_date (hỗ trợ ngày quá khứ)
+    - chỉ days  → N ngày từ hôm nay
     """
     today = date.today()
     if month is not None and year is not None:
         from_date = date(year, month, 1)
         to_date   = date(year + (month // 12), month % 12 + 1, 1) - timedelta(days=1)
+    elif from_date is not None:
+        from_date = date.fromisoformat(from_date)
+        to_date   = from_date + timedelta(days=days - 1)
     else:
         from_date = today
         to_date   = today + timedelta(days=days - 1)

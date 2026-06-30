@@ -1,15 +1,32 @@
 import { useState, useEffect } from 'react'
-import { getAirbnbCalendar, getAirbnbCalendarMonth } from '../api/client'
+import { getAirbnbCalendarMonth, getAirbnbCalendarRange } from '../api/client'
 import { Icon, Spinner } from '../components/UI'
 import s from './AirbnbCalendar.module.css'
 
-const VN_TZ   = 'Asia/Ho_Chi_Minh'
-const DOW_VN  = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
-const MON_VN  = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6',
-                 'Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12']
+const VN_TZ        = 'Asia/Ho_Chi_Minh'
+const DOW_VN       = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+const MON_VN       = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6',
+                      'Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12']
+const WINDOW_DAYS  = 38  // today-7 → today+30
+const WINDOW_STEP  = 7
 
 function todayStr() {
   return new Date().toLocaleDateString('sv-SE', { timeZone: VN_TZ })
+}
+
+function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + n)
+  return [
+    dt.getFullYear(),
+    String(dt.getMonth() + 1).padStart(2, '0'),
+    String(dt.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
+function fmtShort(dateStr) {
+  const [, m, d] = dateStr.split('-')
+  return `${d}/${m}`
 }
 
 function fmtDay(dateStr) {
@@ -184,13 +201,14 @@ function MonthView({ data, viewYear, viewMonth, today }) {
 
 // ── Main page ──────────────────────────────────────────────────────
 export default function AirbnbCalendar() {
-  const nowVN      = new Date(new Date().toLocaleString('en-US', { timeZone: VN_TZ }))
-  const [viewMode,  setViewMode]  = useState('month')
-  const [viewYear,  setViewYear]  = useState(nowVN.getFullYear())
-  const [viewMonth, setViewMonth] = useState(nowVN.getMonth() + 1)
-  const [data,      setData]      = useState(null)
-  const [loading,   setLoading]   = useState(true)
-  const [err,       setErr]       = useState(null)
+  const nowVN       = new Date(new Date().toLocaleString('en-US', { timeZone: VN_TZ }))
+  const [viewMode,    setViewMode]    = useState('month')
+  const [viewYear,    setViewYear]    = useState(nowVN.getFullYear())
+  const [viewMonth,   setViewMonth]   = useState(nowVN.getMonth() + 1)
+  const [winStart,    setWinStart]    = useState(() => addDays(todayStr(), -7))
+  const [data,        setData]        = useState(null)
+  const [loading,     setLoading]     = useState(true)
+  const [err,         setErr]         = useState(null)
   const today = todayStr()
 
   const load = async () => {
@@ -198,7 +216,7 @@ export default function AirbnbCalendar() {
     try {
       const { data: d } = viewMode === 'month'
         ? await getAirbnbCalendarMonth(viewYear, viewMonth)
-        : await getAirbnbCalendar(30)
+        : await getAirbnbCalendarRange(winStart, WINDOW_DAYS)
       setData(d)
     } catch {
       setErr('Không tải được lịch Airbnb. Kiểm tra kết nối hoặc dữ liệu chưa được scrape.')
@@ -207,7 +225,7 @@ export default function AirbnbCalendar() {
     }
   }
 
-  useEffect(() => { load() }, [viewMode, viewYear, viewMonth])  // eslint-disable-line
+  useEffect(() => { load() }, [viewMode, viewYear, viewMonth, winStart])  // eslint-disable-line
 
   const prevMonth = () => {
     if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12) }
@@ -217,6 +235,10 @@ export default function AirbnbCalendar() {
     if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1) }
     else setViewMonth(m => m + 1)
   }
+
+  const prevWindow = () => setWinStart(s => addDays(s, -WINDOW_STEP))
+  const nextWindow = () => setWinStart(s => addDays(s, +WINDOW_STEP))
+  const resetWindow = () => setWinStart(addDays(today, -7))
 
   const confirmedCount   = data?.rooms.filter(r => r.confirmed).length ?? 0
   const unconfirmedCount = (data?.rooms.length ?? 0) - confirmedCount
@@ -239,7 +261,7 @@ export default function AirbnbCalendar() {
         </div>
 
         <div className={s.pageActions}>
-          {/* Month navigation (only in month view) */}
+          {/* Month navigation */}
           {viewMode === 'month' && (
             <div className={s.monthNav}>
               <button className={s.navBtn} onClick={prevMonth} title="Tháng trước">
@@ -247,6 +269,25 @@ export default function AirbnbCalendar() {
               </button>
               <span className={s.monthLabel}>{MON_VN[viewMonth - 1]} {viewYear}</span>
               <button className={s.navBtn} onClick={nextMonth} title="Tháng sau">
+                <Icon name="chevron" size={13} />
+              </button>
+            </div>
+          )}
+
+          {/* Timeline window navigation */}
+          {viewMode === 'timeline' && (
+            <div className={s.monthNav}>
+              <button className={s.navBtn} onClick={prevWindow} title="Lùi 7 ngày">
+                <Icon name="chevLeft" size={13} />
+              </button>
+              <button
+                className={s.winLabel}
+                onClick={resetWindow}
+                title="Về hôm nay"
+              >
+                {fmtShort(winStart)} → {fmtShort(addDays(winStart, WINDOW_DAYS - 1))}
+              </button>
+              <button className={s.navBtn} onClick={nextWindow} title="Tiến 7 ngày">
                 <Icon name="chevron" size={13} />
               </button>
             </div>
@@ -269,7 +310,7 @@ export default function AirbnbCalendar() {
             </button>
             <button
               className={`${s.viewBtn} ${viewMode === 'timeline' ? s.viewBtnActive : ''}`}
-              onClick={() => setViewMode('timeline')}
+              onClick={() => { resetWindow(); setViewMode('timeline') }}
             >
               Dòng thời gian
             </button>
