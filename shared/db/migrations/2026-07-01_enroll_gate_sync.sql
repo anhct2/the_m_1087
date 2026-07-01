@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS enroll.manual_assignments (
     door_id            TEXT NOT NULL,
     direction          TEXT NOT NULL,
     enroll_session_id  UUID REFERENCES enroll.enroll_sessions(id) ON DELETE SET NULL,
-    person_id          UUID NOT NULL REFERENCES enroll.person_profiles(id) ON DELETE CASCADE,
+    person_id          UUID REFERENCES enroll.person_profiles(id) ON DELETE CASCADE,
     room_label         TEXT,
     source             TEXT NOT NULL DEFAULT 'enroll',   -- 'enroll' | 'gate_log'
     assigned_by        TEXT,
@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS enroll.manual_assignments (
 );
 CREATE INDEX IF NOT EXISTS idx_manual_assignments_door   ON enroll.manual_assignments (door_id, direction);
 CREATE INDEX IF NOT EXISTS idx_manual_assignments_person ON enroll.manual_assignments (person_id, assigned_at DESC);
+-- person_id is nullable: an outgoing "assign room only" logs the room now and
+-- lets the worker job identify the actual person later. If an earlier version
+-- of this table was created with person_id NOT NULL, relax it:
+ALTER TABLE enroll.manual_assignments ALTER COLUMN person_id DROP NOT NULL;
 
 
 -- 2) enroll.duplicate_dismissals — referenced by services/api/app/routers/enroll.py

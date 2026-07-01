@@ -2,24 +2,24 @@
 // Data thật được fetch từ api/client.js trong từng page.
 
 export const STATUS = {
-  enrolled:     ['green', '✓ enrolled'],
-  low_quality:  ['amber', '⚠ low quality'],
-  no_detection: ['dim',   '– no detection'],
-  failed:       ['red',   '✕ failed'],
-  processing:   ['blue',  '… processing'],
-  done:         ['green', '✓ done'],
-  pending:      ['dim',   '○ pending'],
-  running:      ['blue',  '… running'],
-  skipped:      ['dim',   '– skipped'],
-  queued:       ['amber', '○ đã đưa vào hàng đợi'],
+  enrolled:     ['green', '✓ đã nhận diện'],
+  low_quality:  ['amber', '⚠ chất lượng thấp'],
+  no_detection: ['dim',   '– không phát hiện'],
+  failed:       ['red',   '✕ lỗi'],
+  processing:   ['blue',  '… đang xử lý'],
+  done:         ['green', '✓ xong'],
+  pending:      ['dim',   '○ chờ xử lý'],
+  running:      ['blue',  '… đang chạy'],
+  skipped:      ['dim',   '– bỏ qua'],
+  queued:       ['amber', '○ trong hàng đợi'],
   not_queued:   ['dim',   '– chưa xử lý'],
 }
 
 export const CONF = {
-  gate_code:       ['green', 'gate code'],
-  camera_chain:    ['teal',  'camera chain'],
-  appearance_only: ['amber', 'appearance'],
-  unknown:         ['dim',   'unknown'],
+  gate_code:       ['green', 'mã cửa'],
+  camera_chain:    ['teal',  'chuỗi camera'],
+  appearance_only: ['amber', 'chỉ ngoại hình'],
+  unknown:         ['dim',   'chưa rõ'],
 }
 
 export const REASON = {

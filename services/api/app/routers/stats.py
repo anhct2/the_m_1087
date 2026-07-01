@@ -54,39 +54,23 @@ def get_trend(days: int = Query(7, ge=1, le=30), _=Depends(require_auth)):
             """)
             hourly = [dict(r) for r in cur.fetchall()]
 
-            # Top users
+            # Phòng ra vào nhiều nhất
             cur.execute("""
-                SELECT user_name,
+                SELECT label AS room,
                     COUNT(*) FILTER (WHERE direction = 'incoming') AS incoming,
                     COUNT(*) FILTER (WHERE direction = 'outgoing') AS outgoing,
-                    COUNT(*) AS total
+                    COUNT(*) AS total,
+                    MAX(event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh') AS last_event
                 FROM gate_session_clips
                 WHERE is_best_match = TRUE
-                  AND user_name IS NOT NULL AND user_name != 'Unknown'
+                  AND label ~ '^P\\.\\d{3}$'
                   AND event_time_vn >= NOW() - (%(d)s || ' days')::interval
-                GROUP BY user_name ORDER BY total DESC LIMIT 10
+                GROUP BY label ORDER BY total DESC LIMIT 12
             """, {"d": days})
-            top_users = [dict(r) for r in cur.fetchall()]
+            top_rooms = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["last_event"] = d["last_event"].isoformat() if d["last_event"] else None
+                top_rooms.append(d)
 
-            # Label breakdown per top user
-            if top_users:
-                names = [u["user_name"] for u in top_users]
-                cur.execute("""
-                    SELECT user_name, label, COUNT(*) AS cnt
-                    FROM gate_session_clips
-                    WHERE is_best_match = TRUE
-                      AND user_name = ANY(%(names)s)
-                      AND label ~ '^P\\.\\d{3}$'
-                      AND event_time_vn >= NOW() - (%(d)s || ' days')::interval
-                    GROUP BY user_name, label
-                    ORDER BY user_name, cnt DESC
-                """, {"names": names, "d": days})
-                label_map = {}
-                for row in cur.fetchall():
-                    label_map.setdefault(row["user_name"], []).append(
-                        {"label": row["label"], "count": int(row["cnt"])}
-                    )
-                for u in top_users:
-                    u["labels"] = label_map.get(u["user_name"], [])
-
-    return {"daily": daily, "hourly": hourly, "top_users": top_users}
+    return {"daily": daily, "hourly": hourly, "top_rooms": top_rooms}

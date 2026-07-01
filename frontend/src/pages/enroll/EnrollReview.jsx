@@ -5,13 +5,13 @@ import { STATUS } from '../enrollData'
 import { getEnrollReview } from '../../api/client'
 import { fmtTime, fmtShortDate, snapUrl } from '../../utils'
 import { GateSessionDrawer } from './GateSessionDetail'
-import { useEnrollHeader } from './EnrollShell'
+import { SubHeader, useEnrollBus } from './EnrollShell'
 
 const REV_COLS = '44px 1.4fr 0.7fr 1.1fr 0.7fr 2fr 0.9fr'
 const PAGE_REV = 20
 
 export default function EnrollReview() {
-  const { reloadHeader } = useEnrollHeader() ?? {}
+  const { bumpRefresh } = useEnrollBus()
   const [items, setItems]   = useState([])
   const [total, setTotal]   = useState(0)
   const [offset, setOffset] = useState(0)
@@ -27,26 +27,27 @@ export default function EnrollReview() {
   }
   useEffect(() => { load(0) }, [])
 
-  if (loading && !items.length) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
-
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <span style={{ fontSize: 12, color: 'var(--tlo)' }}>Hiển thị {days} ngày gần nhất:</span>
-        {[7, 14, 30].map(d => (
-          <span key={d} onClick={() => { setDays(d); load(0, d) }}
-            style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--ln)', background: days === d ? 'var(--inb)' : 'var(--bg1)', color: days === d ? 'oklch(0.85 0.11 152)' : 'var(--tlo)' }}>
-            {d}d
-          </span>
-        ))}
-        <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{total} sessions cần xử lý</span>
-      </div>
-      {items.length === 0 ? (
-        <Empty message="Không có session nào cần xử lý" />
+    <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
+      <SubHeader title="Cần xử lý" sub="Phiên lỗi hoặc đã enroll nhưng chưa gắn được hồ sơ" right={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {[7, 14, 30].map(d => (
+            <span key={d} onClick={() => { setDays(d); load(0, d) }}
+              style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--ln)', background: days === d ? 'var(--inb)' : 'var(--bg1)', color: days === d ? 'oklch(0.85 0.11 152)' : 'var(--tlo)' }}>
+              {d} ngày
+            </span>
+          ))}
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{total} phiên</span>
+        </div>
+      } />
+      {loading && !items.length ? (
+        <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+      ) : items.length === 0 ? (
+        <Empty message="Không có phiên nào cần xử lý" />
       ) : (
         <Card>
           <div style={{ display: 'grid', gridTemplateColumns: REV_COLS, gap: 10, padding: '11px 14px', fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.8px', color: 'var(--txl)', textTransform: 'uppercase', borderBottom: '1px solid var(--bg2)' }}>
-            <div>Snap</div><div>Thời gian</div><div>Phòng</div><div>Trạng thái</div><div>Chiều</div><div>Lý do</div><div>Thao tác</div>
+            <div>Ảnh</div><div>Thời gian</div><div>Phòng</div><div>Trạng thái</div><div>Chiều</div><div>Lý do</div><div>Thao tác</div>
           </div>
           {items.map(r => {
             const [sk, sl] = STATUS[r.status] ?? ['dim', r.status]
@@ -89,7 +90,7 @@ export default function EnrollReview() {
         <GateSessionDrawer
           doorId={drawer}
           onClose={() => setDrawer(null)}
-          onChanged={() => { setDrawer(null); load(offset); reloadHeader?.() }}
+          onChanged={() => { setDrawer(null); load(offset); bumpRefresh?.() }}
         />
       )}
     </div>

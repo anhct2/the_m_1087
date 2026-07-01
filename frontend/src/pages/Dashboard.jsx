@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { StatTile, Card, CardHead, Spinner } from '../components/UI'
 import { getStats, getStatsTrend } from '../api/client'
+import { fmtShortDate, fmtTime } from '../utils'
 const DOW_VN = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 function ddmmToDow(ddmm) {
   if (!ddmm) return ''
@@ -90,6 +92,7 @@ function Legend() {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [stats, setStats] = useState(null)
   const [trend, setTrend] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -104,7 +107,7 @@ export default function Dashboard() {
 
   useEffect(() => { load() }, [])
 
-  const cell = { display: 'grid', gridTemplateColumns: '44px 1.4fr 2fr 80px 80px 80px', padding: '12px 18px', alignItems: 'center', borderBottom: '1px solid var(--bg1)' }
+  const cell = { display: 'grid', gridTemplateColumns: '44px 1.3fr 90px 90px 90px 1.2fr', gap: 10, padding: '12px 18px', alignItems: 'center', borderBottom: '1px solid var(--bg1)' }
 
   if (loading && !stats) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div>
 
@@ -134,14 +137,15 @@ export default function Dashboard() {
     if (idx >= 0 && idx < 24) { hoursInc[idx] = h.incoming; hoursOut[idx] = h.outgoing }
   })
 
-  const topUsers = (trend?.top_users ?? []).slice(0, 5).map((u, i) => ({
+  const topRooms = (trend?.top_rooms ?? []).map((r, i) => ({
     rank: i + 1,
-    name: u.user_name,
-    incoming: u.incoming,
-    outgoing: u.outgoing,
-    total: u.total,
-    labels: (u.labels ?? []).slice(0, 3).map(l => [l.label, l.count]),
+    room: r.room,
+    incoming: r.incoming,
+    outgoing: r.outgoing,
+    total: r.total,
+    last_event: r.last_event,
   }))
+  const maxRoomTotal = Math.max(1, ...topRooms.map(r => r.total))
 
   const updStr = updatedAt.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 
@@ -160,11 +164,11 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 14, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 18 }}>
         {statTiles.map((s, i) => <StatTile key={i} {...s} />)}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 14, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 14, marginBottom: 18 }}>
         <Card>
           <CardHead title="7 ngày gần nhất" sub="Lượt vào / ra mỗi ngày" right={<Legend />} />
           <div style={{ padding: '10px 18px' }}>
@@ -178,36 +182,31 @@ export default function Dashboard() {
       </div>
 
       <Card>
-        <CardHead title="Người dùng nhiều nhất" sub="7 ngày gần nhất · kèm phân bố phòng" />
-        {topUsers.length === 0 ? (
+        <CardHead title="Phòng ra vào nhiều nhất" sub="7 ngày gần nhất · nhấp để xem Gate Log của phòng" />
+        {topRooms.length === 0 ? (
           <div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--tlo)' }}>Không có dữ liệu</div>
         ) : (
           <>
             <div style={{ ...cell, fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '1px', color: 'var(--txl)', textTransform: 'uppercase', padding: '10px 18px' }}>
-              <div>#</div><div>Tên</div><div>Phòng hay dùng</div>
+              <div>#</div><div>Phòng</div>
               <div style={{ textAlign: 'right' }}>Vào</div><div style={{ textAlign: 'right' }}>Ra</div><div style={{ textAlign: 'right' }}>Tổng</div>
+              <div>Gần nhất</div>
             </div>
-            {topUsers.map(u => {
-              const max = Math.max(1, ...u.labels.map(l => l[1]))
-              return (
-                <div key={u.rank} style={cell}>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--txl)' }}>{u.rank}</div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{u.name}</div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {u.labels.map(([lab, cnt], i) => (
-                      <span key={i} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--tmd)', background: 'var(--bg3)', border: '1px solid var(--ln)', borderRadius: 6, padding: '3px 9px', overflow: 'hidden' }}>
-                        <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${(cnt / max) * 100}%`, background: 'oklch(0.78 0.15 152 / 0.14)' }} />
-                        <span style={{ position: 'relative' }}>{lab}</span>
-                        <span style={{ position: 'relative', fontFamily: 'var(--mono)', color: 'var(--tlo)' }}>{cnt}</span>
-                      </span>
-                    ))}
-                  </div>
-                  <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 13, color: IN }}>{u.incoming}</div>
-                  <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 13, color: OUT }}>{u.outgoing}</div>
-                  <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600 }}>{u.total}</div>
+            {topRooms.map(r => (
+              <div key={r.rank} style={{ ...cell, cursor: 'pointer' }} onClick={() => navigate(`/gate-log?room=${encodeURIComponent(r.room)}`)}>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--txl)' }}>{r.rank}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600, color: 'var(--te)' }}>{r.room}</span>
+                  <span style={{ flex: 1, height: 5, borderRadius: 3, background: 'var(--bg3)', overflow: 'hidden', maxWidth: 120 }}>
+                    <span style={{ display: 'block', height: '100%', borderRadius: 3, width: `${(r.total / maxRoomTotal) * 100}%`, background: IN }} />
+                  </span>
                 </div>
-              )
-            })}
+                <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 13, color: IN }}>{r.incoming}</div>
+                <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 13, color: OUT }}>{r.outgoing}</div>
+                <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600 }}>{r.total}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>{r.last_event ? `${fmtShortDate(r.last_event)} ${fmtTime(r.last_event)}` : '—'}</div>
+              </div>
+            ))}
           </>
         )}
       </Card>

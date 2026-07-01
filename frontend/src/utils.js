@@ -48,3 +48,16 @@ export function snapUrl(eventId) {
   if (!eventId) return null
   return `/api/sessions/proxy/snapshot/${eventId}`
 }
+
+// Clip .mp4 phát trực tiếp qua proxy (không cần Bearer, <video> không gửi được header)
+export function clipUrl(eventId) {
+  if (!eventId) return null
+  return `/api/media/clip/${eventId}`
+}
+
+// Chuẩn hoá Date -> 'YYYY-MM-DD' theo giờ địa phương (dùng cho input type=date)
+export function toDateInput(d) {
+  if (!d) return ''
+  const dt = d instanceof Date ? d : new Date(d)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+}

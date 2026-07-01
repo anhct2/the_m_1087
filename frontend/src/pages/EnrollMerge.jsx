@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Card, Badge, Icon, Avatar, Btn, Modal, SimBar, Spinner } from '../components/UI'
+import { Badge, Icon, Avatar, Btn, Modal, SimBar, Spinner } from '../components/UI'
 import { CONF } from './enrollData'
 import { getDuplicateCluster, mergeProfiles, dismissCluster } from '../api/client'
 import { snapUrl, fmtDate } from '../utils'
