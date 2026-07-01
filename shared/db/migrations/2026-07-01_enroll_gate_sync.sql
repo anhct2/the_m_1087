@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS enroll.duplicate_dismissals (
 --    allowed) — hence door_id/unlock_id are appended last here rather than
 --    placed next to job_id, to keep the existing column order/names intact
 --    for any other code still selecting from this view positionally.
+--
+--    It also forbids changing a column's data type/typmod. The legacy
+--    gate_sessions (v1) UNIONs a real varchar(16) `method` with a literal
+--    NULL::character varying (untyped length) in its `outgoing` branch,
+--    which collapses the resulting column typmod to plain "character
+--    varying" (no length). gate_sessions_v2 has no such UNION, so its
+--    `method` keeps the source varchar(16) typmod — a straight `gs.method`
+--    reference here would change the view column's type and fail the same
+--    way. Cast it back down to unqualified varchar to match exactly.
 CREATE OR REPLACE VIEW enroll.v_sessions AS
 SELECT es.id,
        es.job_id,
@@ -76,7 +85,7 @@ SELECT es.id,
        es.warnings,
        es.created_at,
        gs.user_name,
-       gs.method,
+       gs.method::character varying AS method,
        pp.display_name AS recognized_name,
        pp.known_room   AS recognized_room,
        pp.gender       AS recognized_gender,
