@@ -320,16 +320,18 @@ def get_profile(person_id: str, _=Depends(require_auth)):
             """, {"pid": person_id})
             sessions = cur.fetchall()
 
-            session_ids = [s["id"] for s in sessions]
+            session_ids = [str(s["id"]) for s in sessions]
             clips = []
             if session_ids:
                 cur.execute("""
                     SELECT ccr.enroll_session_id, ccr.camera_id, ccr.camera_order,
                            ccr.frigate_event_id, ccr.confidence, ccr.stopped_here,
+                           gsc.clip_url,
                            es.event_time_vn, es.door_id, es.direction
                     FROM enroll.camera_clip_results ccr
                     JOIN enroll.enroll_sessions es ON es.id = ccr.enroll_session_id
-                    WHERE ccr.enroll_session_id = ANY(%(sids)s) AND ccr.frigate_event_id IS NOT NULL
+                    LEFT JOIN gate_session_clips gsc ON gsc.id = ccr.gsc_id
+                    WHERE ccr.enroll_session_id = ANY(%(sids)s::uuid[]) AND ccr.frigate_event_id IS NOT NULL
                     ORDER BY es.event_time_vn DESC, ccr.camera_order
                 """, {"sids": session_ids})
                 clips = cur.fetchall()
@@ -832,6 +834,16 @@ def get_gate_session_detail(door_id: str, _=Depends(require_auth)):
             if not row:
                 raise HTTPException(404, "Session not found")
 
+            # Phòng đã được gán/enroll (có thể khác nhãn gate log gốc)
+            enroll_room_label = None
+            if row["enroll_session_id"]:
+                cur.execute(
+                    "SELECT room_label FROM enroll.enroll_sessions WHERE id = %(sid)s",
+                    {"sid": row["enroll_session_id"]},
+                )
+                r2 = cur.fetchone()
+                enroll_room_label = r2["room_label"] if r2 else None
+
             cur.execute("""
                 SELECT id, frigate_event_id, camera, frigate_label, frigate_score,
                     delta_seconds, clip_finalized, codec, snapshot_url, clip_url,
@@ -890,6 +902,7 @@ def get_gate_session_detail(door_id: str, _=Depends(require_auth)):
 
     return {
         **dict(row),
+        "enroll_room_label":  enroll_room_label,
         "gate_clips":         [dict(c) for c in gate_clips],
         "camera_clips":       [dict(c) for c in camera_clips],
         "persons":            [dict(p) for p in persons],

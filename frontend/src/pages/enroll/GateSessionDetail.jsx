@@ -45,11 +45,19 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
         </Link>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <Badge kind={sk}>{sl}</Badge>
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>door_id #{s.door_id}</span>
         {s.gate_method && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>· {s.gate_method}</span>}
+        {s.enroll_room_label && <Badge kind="teal">phòng gán: {s.enroll_room_label}</Badge>}
       </div>
+
+      {/* Trạng thái sau khi gán phòng thủ công (chờ worker nhận diện lại) */}
+      {!isIn && s.enroll_room_label && !s.recognized_person_id && (
+        <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, border: '1px solid var(--am3)', background: 'var(--amb)', fontSize: 12, color: 'var(--am)' }}>
+          Đã gán phòng <strong>{s.enroll_room_label}</strong> · đang chờ worker enroll lại để xác định người trong phòng.
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px,1fr))', gap: 10, marginBottom: 18 }}>
         {[
@@ -98,7 +106,7 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
                 <div onClick={() => cam.frigate_event_id && onSnap(snapItems, snapItems.findIndex(x => x.eventId === cam.frigate_event_id))} style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 9, overflow: 'hidden', border: `1px solid ${cam.stopped_here ? 'var(--in3)' : 'var(--ln)'}`, background: `linear-gradient(135deg, ${CAM_COLORS[cam.camera_id] || 'oklch(0.28 0.02 255)'}, oklch(0.15 0.01 255))`, cursor: cam.frigate_event_id ? 'zoom-in' : 'default' }}>
                   {cam.frigate_event_id && <img src={snapUrl(cam.frigate_event_id)} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
                   {cam.frigate_event_id && (
-                    <button onClick={e => { e.stopPropagation(); onClip(clipUrl(cam.frigate_event_id), `${cam.camera_id}`) }} style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    <button onClick={e => { e.stopPropagation(); onClip(cam.clip_url || clipUrl(cam.frigate_event_id), `${cam.camera_id}`) }} style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                       <Icon name="play" size={16} style={{ color: 'oklch(0.98 0 0)' }} />
                     </button>
                   )}
@@ -120,7 +128,7 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
             {gateClips.filter(c => c.frigate_event_id).map((cam, ci) => (
               <div key={ci} onClick={() => onSnap(snapItems, snapItems.findIndex(x => x.eventId === cam.frigate_event_id))} style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 9, overflow: 'hidden', border: '1px solid var(--ln)', cursor: 'zoom-in', background: `linear-gradient(135deg, ${CAM_COLORS[cam.camera] || 'oklch(0.28 0.02 255)'}, oklch(0.15 0.01 255))` }}>
                 <img src={snapUrl(cam.frigate_event_id)} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
-                <button onClick={e => { e.stopPropagation(); onClip(clipUrl(cam.frigate_event_id), cam.camera) }} style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                <button onClick={e => { e.stopPropagation(); onClip(cam.clip_url || clipUrl(cam.frigate_event_id), cam.camera) }} style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                   <Icon name="play" size={16} style={{ color: 'oklch(0.98 0 0)' }} />
                 </button>
                 <span style={{ position: 'absolute', top: 8, left: 9, fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 600, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.4)', padding: '1px 4px', borderRadius: 3 }}>{cam.camera}</span>
