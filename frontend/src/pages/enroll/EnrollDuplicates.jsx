@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Avatar, Btn, Spinner, Empty } from '../../components/UI'
+import { Avatar, Badge, Btn, Spinner, Empty, Icon } from '../../components/UI'
+import { CONF } from '../enrollData'
 import { getDuplicates, dismissCluster } from '../../api/client'
-import { snapUrl } from '../../utils'
+import { snapUrl, fmtShortDate } from '../../utils'
+import { SubHeader } from './EnrollShell'
 
 export default function EnrollDuplicates() {
   const navigate = useNavigate()
@@ -21,49 +23,57 @@ export default function EnrollDuplicates() {
       .then(() => setClusters(cs => cs.filter(c => c.cluster_id !== cluster.cluster_id)))
   }
 
-  if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
-  if (!clusters.length) return <Empty message="Không phát hiện profile trùng lặp" />
-
   return (
-    <div>
-      <div style={{ fontSize: 12, color: 'var(--tlo)', marginBottom: 14 }}>
-        {clusters.length} cluster trùng lặp · threshold cosine similarity ≥ 0.82
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
-        {clusters.map(cluster => {
-          const [a, b] = cluster.members
-          return (
+    <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
+      <SubHeader title="Trùng lặp" sub="Các hồ sơ nghi trùng (cosine ≥ 0.82) · nhấp ảnh để mở hồ sơ, xem lịch sử" right={
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{clusters.length} cụm</span>
+      } />
+
+      {loading ? (
+        <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+      ) : !clusters.length ? (
+        <Empty message="Không phát hiện hồ sơ trùng lặp" />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
+          {clusters.map(cluster => (
             <div key={cluster.cluster_id} style={{ background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 13, padding: 18 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600, color: 'var(--am)' }}>{Math.round(cluster.max_similarity * 100)}%</span>
-                  <span style={{ fontSize: 10.5, color: 'var(--tlo)' }}>similarity · {cluster.members.length} profiles</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--tlo)' }}>tương đồng · {cluster.members.length} hồ sơ</span>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                {[a, b].map((m, i) => m && (
-                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, borderRadius: 10, border: '1px solid var(--ln)', padding: '12px 8px' }}>
-                    <Avatar gender={m.gender} size={48} src={snapUrl(m.face_event_id)} />
-                    <div style={{ fontSize: 12.5, fontWeight: 600, textAlign: 'center' }}>{m.display_name || '—'}</div>
-                    <div style={{ fontSize: 10.5, color: 'var(--tlo)' }}>{m.known_room || '—'}</div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--txl)' }}>×{m.enroll_count} enrolls</div>
-                    {i === 1 && <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--am)' }}>{Math.round(m.similarity * 100)}% sim</div>}
-                  </div>
-                ))}
-                {cluster.members.length > 2 && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, border: '1px dashed var(--ln)', padding: '12px 8px', minWidth: 52, color: 'var(--txl)', fontSize: 11 }}>
-                    +{cluster.members.length - 2}
-                  </div>
-                )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+                {cluster.members.map((m, i) => {
+                  const [ck, cl] = CONF[m.confidence_lvl] ?? ['dim', m.confidence_lvl ?? 'unknown']
+                  return (
+                    <div key={m.id} onClick={() => navigate(`/enroll/profiles/${m.id}`)} title="Mở hồ sơ" style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--ln)', cursor: 'pointer', background: 'var(--bg2)' }}>
+                      <Avatar gender={m.gender} size={42} src={snapUrl(m.face_event_id)} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{m.display_name || 'Chưa đặt tên'}</div>
+                        <div style={{ fontSize: 10.5, color: 'var(--tlo)', display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
+                          <span>{m.known_room || '—'}</span>
+                          <span style={{ fontFamily: 'var(--mono)' }}>×{m.enroll_count} lần</span>
+                          {m.last_seen_ts && <span style={{ fontFamily: 'var(--mono)' }}>{fmtShortDate(m.last_seen_ts)}</span>}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                        <Badge kind={ck}>{cl}</Badge>
+                        {i > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--am)' }}>{Math.round(m.similarity * 100)}%</span>}
+                      </div>
+                      <Icon name="chevron" size={14} style={{ color: 'var(--tlo)' }} />
+                    </div>
+                  )
+                })}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Btn variant="ghost" style={{ flex: 1, fontSize: 11.5 }} onClick={() => handleDismiss(cluster)}>Bỏ qua</Btn>
+                <Btn variant="ghost" style={{ flex: 1, fontSize: 11.5 }} onClick={() => handleDismiss(cluster)}>Không phải trùng</Btn>
                 <Btn variant="primary" style={{ flex: 1, fontSize: 11.5 }} onClick={() => navigate(`/enroll/merge/${cluster.cluster_id}`)}>Xem / Gộp</Btn>
               </div>
             </div>
-          )
-        })}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

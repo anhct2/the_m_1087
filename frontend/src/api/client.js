@@ -73,7 +73,7 @@ export const getEnrollProfiles = (params)     => api.get('/api/enroll/profiles',
 export const getEnrollProfile  = (id)         => api.get(`/api/enroll/profiles/${id}`)
 export const patchEnrollProfile= (id, body)   => api.patch(`/api/enroll/profiles/${id}`, body)
 export const postReenroll       = (person_id)  => api.post(`/api/enroll/profiles/${person_id}/re-enroll`)
-export const getOccupancy      = ()           => api.get('/api/enroll/occupancy')
+export const getOccupancy      = (params)     => api.get('/api/enroll/occupancy', { params })
 export const getEnrollJobs     = (params)     => api.get('/api/enroll/jobs', { params })
 export const postBackfill      = (body)       => api.post('/api/enroll/backfill', body)
 export const cancelJob         = (id)         => api.delete(`/api/enroll/jobs/${id}`)
@@ -94,6 +94,8 @@ export const dismissCluster    = (id, body)   => api.post(`/api/enroll/duplicate
 export const getGateSessions    = (params)      => api.get('/api/enroll/gate-sessions', { params })
 export const getGateSessionById = (doorId)      => api.get(`/api/enroll/gate-sessions/${doorId}`)
 export const assignGateSession  = (doorId, body) => api.post(`/api/enroll/gate-sessions/${doorId}/assign`, body)
+export const assignGateSessionRoom = (doorId, body) => api.post(`/api/enroll/gate-sessions/${doorId}/assign-room`, body)
+export const getRoomDayProfiles = (room, date) => api.get('/api/enroll/room-day-profiles', { params: { room, date } })
 
 // ── Airbnb ────────────────────────────────────────────────────────
 export const getAirbnbCalendar      = (days = 30)            => api.get('/api/airbnb/calendar', { params: { days } })

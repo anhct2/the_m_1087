@@ -227,18 +227,35 @@ def search_profiles(
 def list_profiles(
     room:       Optional[str] = None,
     confidence: Optional[str] = None,
+    date_from:  Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to:    Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     limit:      int = Query(50, ge=1, le=200),
     offset:     int = Query(0, ge=0),
     _=Depends(require_auth),
 ):
-    filters = ["is_active = true"]
+    filters = ["pp.is_active = true"]
     params  = {}
     if room:
-        filters.append("known_room = %(room)s")
-        params["room"] = room
+        rooms = [r.strip() for r in room.split(",") if r.strip()]
+        filters.append("pp.known_room = ANY(%(rooms)s)")
+        params["rooms"] = rooms
     if confidence:
-        filters.append("confidence_lvl = %(conf)s")
+        filters.append("pp.confidence_lvl = %(conf)s")
         params["conf"] = confidence
+    # Lọc theo ngày: hồ sơ có ít nhất 1 phiên enroll trong khoảng ngày
+    if date_from or date_to:
+        date_conds = []
+        if date_from:
+            date_conds.append("(es.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= %(date_from)s")
+            params["date_from"] = date_from
+        if date_to:
+            date_conds.append("(es.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= %(date_to)s")
+            params["date_to"] = date_to
+        filters.append(f"""EXISTS (
+            SELECT 1 FROM enroll.person_session_map psm_d
+            JOIN enroll.enroll_sessions es ON es.id = psm_d.enroll_session_id
+            WHERE psm_d.person_id = pp.id AND {' AND '.join(date_conds)}
+        )""")
     params.update({"limit": limit, "offset": offset})
 
     with get_conn() as conn:
@@ -363,10 +380,47 @@ def update_profile(person_id: str, body: dict, _=Depends(require_auth)):
 
 # ── Occupancy ────────────────────────────────────────────────────
 @router.get("/occupancy")
-def get_occupancy(_=Depends(require_auth)):
+def get_occupancy(
+    date_from: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to:   Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    _=Depends(require_auth),
+):
+    """
+    Xem theo hồ sơ. Không có ngày → lưu trú đang mở (như v_occupancy).
+    Có ngày → các lượt lưu trú GIAO với khoảng ngày (kể cả đã rời đi), để
+    xem lại lịch sử ai đã ở phòng nào trong khoảng đó.
+    """
+    where = ["1=1"]
+    params: dict = {}
+    if date_from or date_to:
+        if date_from:
+            where.append("(rs.exit_ts IS NULL OR (rs.exit_ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= %(date_from)s)")
+            params["date_from"] = date_from
+        if date_to:
+            where.append("(rs.entry_ts AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= %(date_to)s")
+            params["date_to"] = date_to
+    else:
+        where.append("rs.exit_ts IS NULL")
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM enroll.v_occupancy")
+            cur.execute(f"""
+                SELECT rs.room_id, rs.person_id, pp.display_name, pp.known_room,
+                       pp.confidence_lvl, pp.face_quality, pp.gender, pp.age_estimate,
+                       pp.appearance_notes, rs.entry_ts, rs.exit_ts, rs.entry_confidence,
+                       EXTRACT(EPOCH FROM (COALESCE(rs.exit_ts, now()) - rs.entry_ts)) / 3600.0 AS hours_in_room,
+                       (rs.exit_ts IS NULL) AS active,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.person_session_map psm
+                        JOIN enroll.camera_clip_results ccr ON ccr.enroll_session_id = psm.enroll_session_id
+                        WHERE psm.person_id = pp.id AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS face_event_id
+                FROM enroll.room_stays rs
+                JOIN enroll.person_profiles pp ON pp.id = rs.person_id
+                WHERE {' AND '.join(where)} AND pp.is_active
+                ORDER BY rs.entry_ts DESC
+            """, params)
             return [dict(r) for r in cur.fetchall()]
 
 
@@ -717,6 +771,8 @@ def list_gate_sessions(
     room:      Optional[str] = None,
     user_name: Optional[str] = None,
     status:    Optional[str] = None,
+    date_from: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to:   Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     limit:     int = Query(50, ge=1, le=200),
     offset:    int = Query(0, ge=0),
     _=Depends(require_auth),
@@ -725,7 +781,7 @@ def list_gate_sessions(
     Danh sách session lấy từ enroll.v_gate_sessions — view này bắt nguồn
     từ gate_session_clips (is_best_match=TRUE), CHÍNH XÁC cùng tập dữ liệu
     mà GET /api/sessions (Gate Log) đếm/liệt kê. Vì vậy với cùng bộ filter
-    (direction/room/user_name), tổng số session ở đây luôn khớp 1-1 với
+    (direction/room/user_name/ngày), tổng số session ở đây luôn khớp 1-1 với
     Gate Log — kể cả những session chưa có job/enroll_session (hiện
     effective_status = 'not_queued').
     """
@@ -740,6 +796,12 @@ def list_gate_sessions(
         filters.append("gate_user_name ILIKE %(user_name)s"); params["user_name"] = f"%{user_name}%"
     if status:
         filters.append("effective_status = %(status)s"); params["status"] = status
+    if date_from:
+        filters.append("(event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= %(date_from)s")
+        params["date_from"] = date_from
+    if date_to:
+        filters.append("(event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= %(date_to)s")
+        params["date_to"] = date_to
 
     where = " AND ".join(filters)
     count_params = dict(params)
@@ -802,7 +864,14 @@ def get_gate_session_detail(door_id: str, _=Depends(require_auth)):
                     SELECT pp.id, pp.display_name, pp.known_room, pp.confidence_lvl,
                            pp.face_quality, pp.gender, pp.age_estimate,
                            pp.enroll_count, pp.last_seen_ts,
-                           psm.is_new, psm.merge_sim
+                           psm.is_new, psm.merge_sim,
+                           (SELECT ccr2.frigate_event_id
+                            FROM enroll.person_session_map psm2
+                            JOIN enroll.camera_clip_results ccr2
+                              ON ccr2.enroll_session_id = psm2.enroll_session_id
+                            WHERE psm2.person_id = pp.id AND ccr2.frigate_event_id IS NOT NULL
+                            ORDER BY ccr2.stopped_here DESC, ccr2.confidence DESC NULLS LAST
+                            LIMIT 1) AS face_event_id
                     FROM enroll.person_profiles pp
                     JOIN enroll.person_session_map psm ON psm.person_id = pp.id
                     WHERE psm.enroll_session_id = %(sid)s
@@ -884,6 +953,115 @@ def assign_gate_session(door_id: str, body: dict, user: str = Depends(require_au
             )
         conn.commit()
     return {"ok": True, "profile_id": profile_id, "enroll_session_id": session_id}
+
+
+# ── Profiles đã enroll (incoming) cho 1 phòng trong 1 ngày ──────
+# Dùng cho picker khi gán tay outgoing: chỉ hiện người thực sự đã vào phòng
+# đó trong ngày, không lục lại toàn bộ lịch sử (ảnh nhỏ khó chọn).
+@router.get("/room-day-profiles")
+def room_day_profiles(
+    room: str = Query(...),
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    _=Depends(require_auth),
+):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT pp.id, pp.display_name, pp.known_room, pp.confidence_lvl,
+                       pp.gender, pp.age_estimate, pp.face_quality,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.person_session_map psm2
+                        JOIN enroll.camera_clip_results ccr
+                          ON ccr.enroll_session_id = psm2.enroll_session_id
+                        WHERE psm2.person_id = pp.id AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS face_event_id
+                FROM enroll.person_profiles pp
+                JOIN enroll.person_session_map psm ON psm.person_id = pp.id
+                JOIN enroll.enroll_sessions es ON es.id = psm.enroll_session_id
+                WHERE pp.is_active
+                  AND es.direction = 'incoming'
+                  AND es.room_label = %(room)s
+                  AND (es.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = %(date)s
+                ORDER BY pp.display_name NULLS LAST
+            """, {"room": room, "date": date})
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ── Gán PHÒNG (không cần chọn người) cho session outgoing ───────
+@router.post("/gate-sessions/{door_id}/assign-room")
+def assign_gate_session_room(door_id: str, body: dict, user: str = Depends(require_auth)):
+    """
+    Gán 1 phòng cho session outgoing (Ra) mà chưa xác định được người.
+    Cập nhật room_label rồi đưa lại vào hàng đợi để worker enroll lại và
+    tự xác định người trong phòng đó (giống chiều incoming). Việc merge
+    người cụ thể để cho job xử lý.
+    """
+    room = (body.get("known_room") or body.get("room") or "").strip()
+    if not room:
+        raise HTTPException(400, "known_room là bắt buộc")
+
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT session_id AS door_id, unlock_id, direction, event_time_vn
+                FROM gate_session_clips
+                WHERE session_id = %(d)s AND is_best_match = TRUE
+                LIMIT 1
+            """, {"d": door_id})
+            gate = cur.fetchone()
+            if not gate:
+                raise HTTPException(404, "Gate session not found")
+
+            cur.execute(
+                "SELECT id, unlock_id FROM enroll.enroll_sessions WHERE door_id = %(d)s AND direction = %(dir)s",
+                {"d": door_id, "dir": gate["direction"]},
+            )
+            es = cur.fetchone()
+            unlock_id = (es["unlock_id"] if es else gate["unlock_id"]) if (es or gate["unlock_id"] is not None) \
+                else gate["event_time_vn"].strftime("%Y-%m-%d %H:%M:%S")
+
+            if es:
+                session_id = str(es["id"])
+                cur.execute("""
+                    UPDATE enroll.enroll_sessions
+                    SET room_label = %(r)s, status = 'processing',
+                        error_msg = NULL, finished_at = NULL
+                    WHERE id = %(id)s
+                """, {"r": room, "id": session_id})
+            else:
+                cur.execute("""
+                    INSERT INTO enroll.enroll_sessions
+                        (door_id, unlock_id, event_time_vn, room_label, direction, status)
+                    VALUES (%(d)s, %(u)s, %(t)s, %(r)s, %(dir)s, 'processing')
+                    RETURNING id
+                """, {"d": door_id, "u": str(unlock_id), "t": gate["event_time_vn"],
+                      "r": room, "dir": gate["direction"]})
+                session_id = str(cur.fetchone()["id"])
+
+            # Đưa vào hàng đợi để worker f87 enroll lại với phòng đã biết
+            cur.execute("""
+                INSERT INTO enroll.job_queue
+                    (door_id, unlock_id, event_time_vn, room_label, direction,
+                     status, scheduled_at)
+                VALUES (%(d)s, %(u)s, %(t)s, %(r)s, %(dir)s, 'pending', now())
+                ON CONFLICT (door_id, unlock_id, direction) DO UPDATE
+                    SET status = 'pending', attempt_count = 0, scheduled_at = now(),
+                        room_label = EXCLUDED.room_label, last_error = NULL,
+                        locked_by = NULL, locked_at = NULL,
+                        started_at = NULL, finished_at = NULL
+            """, {"d": door_id, "u": str(unlock_id), "t": gate["event_time_vn"],
+                  "r": room, "dir": gate["direction"]})
+
+            cur.execute("""
+                INSERT INTO enroll.manual_assignments
+                    (door_id, direction, enroll_session_id, person_id, room_label, source, assigned_by)
+                VALUES (%(d)s, %(dir)s, %(sid)s, NULL, %(room)s, %(src)s, %(by)s)
+            """, {"d": door_id, "dir": gate["direction"], "sid": session_id,
+                  "room": room, "src": body.get("source") or "gate_log", "by": user})
+        conn.commit()
+    return {"ok": True, "enroll_session_id": session_id, "room": room, "requeued": True}
 
 
 # ── Worker heartbeat status ──────────────────────────────────

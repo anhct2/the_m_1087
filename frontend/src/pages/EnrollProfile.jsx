@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { Card, Badge, Icon, SimBar, Avatar, Btn, Spinner } from '../components/UI'
+import { Lightbox } from '../components/Lightbox'
+import { ClipPlayer } from '../components/ClipPlayer'
 import { CONF } from './enrollData'
 import { getEnrollProfile, postReenroll } from '../api/client'
-import { fmtTime, fmtShortDate, fmtDate, snapUrl } from '../utils'
+import { fmtTime, fmtShortDate, fmtDate, snapUrl, clipUrl } from '../utils'
 
 // Nhóm clip theo ngày (VN) — mới nhất trước
 function groupClipsByDay(clips) {
@@ -22,6 +24,8 @@ export default function EnrollProfile() {
   const [p, setP]         = useState(null)
   const [loading, setLoading] = useState(true)
   const [reenrolling, setReenrolling] = useState(false)
+  const [lightbox, setLightbox] = useState(null)
+  const [clip, setClip] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -121,7 +125,7 @@ export default function EnrollProfile() {
         </Card>
       </div>
 
-      {/* Ảnh/clip liên quan theo ngày */}
+      {/* Ảnh/clip liên quan theo ngày — nhấp ảnh để phóng to, nút play để xem clip */}
       <Card pad={18} style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Ảnh / clip liên quan theo ngày</div>
         {clipGroups.length === 0
@@ -132,20 +136,21 @@ export default function EnrollProfile() {
                 <div key={day}>
                   <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)', marginBottom: 8 }}>{fmtDate(dayClips[0].event_time_vn)}</div>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    {dayClips.map((c, i) => (
-                      <Link
-                        key={i}
-                        to={`/enroll/sessions/gate/${c.door_id}`}
-                        title={`${c.camera_id} · ${fmtTime(c.event_time_vn)} · xem session`}
-                        style={{ position: 'relative', width: 84, textDecoration: 'none' }}
-                      >
-                        <div style={{ position: 'relative', width: 84, height: 63, borderRadius: 8, overflow: 'hidden', border: `1px solid ${c.stopped_here ? 'var(--in3)' : 'var(--ln)'}` }}>
-                          <img src={snapUrl(c.frigate_event_id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          <span style={{ position: 'absolute', top: 4, left: 5, fontFamily: 'var(--mono)', fontSize: 9, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.5)', padding: '1px 4px', borderRadius: 3 }}>{c.camera_id}</span>
+                    {dayClips.map((c, i) => {
+                      const lbItems = dayClips.filter(x => x.frigate_event_id).map(x => ({ src: snapUrl(x.frigate_event_id), eventId: x.frigate_event_id, caption: `${x.camera_id} · ${fmtTime(x.event_time_vn)} · ${x.direction === 'incoming' ? 'Vào' : 'Ra'}` }))
+                      const lbIndex = lbItems.findIndex(x => x.eventId === c.frigate_event_id)
+                      return (
+                        <div key={i} style={{ width: 92 }}>
+                          <div style={{ position: 'relative', width: 92, height: 69, borderRadius: 8, overflow: 'hidden', border: `1px solid ${c.stopped_here ? 'var(--in3)' : 'var(--ln)'}`, cursor: 'zoom-in' }} onClick={() => setLightbox({ items: lbItems, index: Math.max(0, lbIndex) })}>
+                            <img src={snapUrl(c.frigate_event_id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <span style={{ position: 'absolute', top: 4, left: 5, fontFamily: 'var(--mono)', fontSize: 9, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.5)', padding: '1px 4px', borderRadius: 3 }}>{c.camera_id}</span>
+                            <span style={{ position: 'absolute', top: 4, right: 5, fontFamily: 'var(--mono)', fontSize: 8.5, color: c.direction === 'incoming' ? 'var(--in)' : 'var(--out)', background: 'oklch(0 0 0 / 0.5)', padding: '1px 4px', borderRadius: 3 }}>{c.direction === 'incoming' ? 'VÀO' : 'RA'}</span>
+                            <button onClick={e => { e.stopPropagation(); setClip({ src: clipUrl(c.frigate_event_id), caption: `${c.camera_id} · ${fmtTime(c.event_time_vn)}` }) }} style={{ position: 'absolute', bottom: 4, right: 5, width: 22, height: 22, borderRadius: '50%', background: 'oklch(0 0 0 / 0.55)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Icon name="play" size={11} style={{ color: 'oklch(0.98 0 0)' }} /></button>
+                          </div>
+                          <Link to={`/enroll/sessions/gate/${c.door_id}`} style={{ display: 'block', fontSize: 9.5, color: 'var(--in)', marginTop: 3, textAlign: 'center', fontFamily: 'var(--mono)', textDecoration: 'none' }}>{fmtTime(c.event_time_vn)}</Link>
                         </div>
-                        <div style={{ fontSize: 9.5, color: 'var(--txl)', marginTop: 3, textAlign: 'center', fontFamily: 'var(--mono)' }}>{fmtTime(c.event_time_vn)}</div>
-                      </Link>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               ))}
@@ -157,30 +162,28 @@ export default function EnrollProfile() {
       {/* Timeline + stays */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 14 }}>
         <Card pad={18}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 16 }}>Lịch sử enroll sessions</div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 16 }}>Lịch sử phiên enroll (map với Gate Log)</div>
           {sessions.length === 0
-            ? <div style={{ fontSize: 12, color: 'var(--tlo)' }}>Chưa có session nào</div>
+            ? <div style={{ fontSize: 12, color: 'var(--tlo)' }}>Chưa có phiên nào</div>
             : (
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {sessions.map((t, i) => {
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {sessions.map((t) => {
                   const isGood = t.status === 'enrolled'
+                  const isIn = t.direction === 'incoming'
                   return (
-                    <div key={t.id} style={{ display: 'flex', gap: 12, paddingBottom: 16 }}>
-                      <Avatar gender={p.gender} size={30} src={snapUrl(t.snap_event_id)} style={{ marginTop: 0 }} />
-                      <div style={{ flex: 1 }}>
+                    <div key={t.id} style={{ display: 'flex', gap: 12, padding: '8px 6px', borderRadius: 8, alignItems: 'center' }}>
+                      <Avatar gender={p.gender} size={30} src={snapUrl(t.snap_event_id)} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: isIn ? 'var(--in)' : 'var(--out)' }}>{isIn ? '↓ Vào' : '↑ Ra'}</span>
                           <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--tmd)' }}>{fmtShortDate(t.event_time_vn)} {fmtTime(t.event_time_vn)}</span>
-                          <Badge kind={isGood ? 'green' : 'amber'}>{t.status}</Badge>
+                          <Badge kind={isGood ? 'green' : 'amber'}>{t.room_label}</Badge>
                           {t.overall_quality > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{Math.round(t.overall_quality * 100)}%</span>}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                          <span style={{ fontSize: 11, color: 'var(--tlo)' }}>{t.room_label}</span>
-                          {t.door_id && (
-                            <Link to={`/gate-log?focus=${t.door_id}`} style={{ fontSize: 10.5, color: 'var(--in)', textDecoration: 'none' }}>
-                              Xem ở Gate Log →
-                            </Link>
-                          )}
-                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {t.door_id && <Link to={`/enroll/sessions/gate/${t.door_id}`} title="Chi tiết phiên" style={{ display: 'flex', width: 24, height: 24, borderRadius: 6, border: '1px solid var(--ln)', alignItems: 'center', justifyContent: 'center', color: 'var(--tlo)' }}><Icon name="users" size={11} /></Link>}
+                        {t.door_id && <Link to={`/gate-log?focus=${t.door_id}`} title="Xem ở Gate Log" style={{ display: 'flex', width: 24, height: 24, borderRadius: 6, border: '1px solid var(--ln)', alignItems: 'center', justifyContent: 'center', color: 'var(--tlo)' }}><Icon name="gate" size={11} /></Link>}
                       </div>
                     </div>
                   )
@@ -231,6 +234,9 @@ export default function EnrollProfile() {
           </div>
         </Card>
       )}
+
+      {lightbox && <Lightbox items={lightbox.items} index={lightbox.index} onIndex={i => setLightbox(lb => ({ ...lb, index: i }))} onClose={() => setLightbox(null)} />}
+      {clip && <ClipPlayer src={clip.src} caption={clip.caption} onClose={() => setClip(null)} />}
     </div>
   )
 }

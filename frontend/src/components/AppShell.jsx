@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useCallback } from 'react'
+import { useState, useEffect, memo } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { Icon } from './UI'
@@ -13,12 +13,12 @@ const NAV = [
 ]
 
 export const ENROLL_SUBNAV = [
-  { to: '/enroll/sessions',   label: 'Sessions' },
+  { to: '/enroll/sessions',   label: 'Phiên nhận diện' },
   { to: '/enroll/review',     label: 'Cần xử lý' },
   { to: '/enroll/duplicates', label: 'Trùng lặp' },
-  { to: '/enroll/profiles',   label: 'Profiles' },
-  { to: '/enroll/occupancy',  label: 'Occupancy' },
-  { to: '/enroll/jobs',       label: 'Jobs' },
+  { to: '/enroll/profiles',   label: 'Hồ sơ' },
+  { to: '/enroll/occupancy',  label: 'Lưu trú' },
+  { to: '/enroll/jobs',       label: 'Tác vụ' },
 ]
 
 const Clock = memo(function Clock() {
@@ -41,6 +41,14 @@ export default function AppShell() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const inEnroll = location.pathname.startsWith('/enroll')
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('tcs_sidebar_collapsed') === '1')
+
+  function toggleSidebar() {
+    setCollapsed(c => {
+      localStorage.setItem('tcs_sidebar_collapsed', c ? '0' : '1')
+      return !c
+    })
+  }
 
   const navItem = ({ isActive }) => ({
     position: 'relative', display: 'flex', alignItems: 'center', gap: 11,
@@ -51,17 +59,21 @@ export default function AppShell() {
   })
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '216px 1fr', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: collapsed ? '1fr' : '216px 1fr', height: '100vh', overflow: 'hidden' }}>
       {/* Sidebar */}
+      {!collapsed && (
       <aside style={{ background: 'oklch(0.165 0.006 255)', borderRight: '1px solid var(--ln)', display: 'flex', flexDirection: 'column', padding: '16px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '6px 8px 20px' }}>
           <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--bg2)', border: '1px solid var(--ln2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--in)', boxShadow: '0 0 10px oklch(0.78 0.15 152 / 0.7)' }} />
           </div>
-          <div>
+          <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: 14, letterSpacing: '0.3px' }}>87 TCS</div>
             <div style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--tlo)', letterSpacing: '1.5px', textTransform: 'uppercase' }}>Monitor</div>
           </div>
+          <button onClick={toggleSidebar} title="Ẩn thanh điều hướng" style={{ width: 28, height: 28, borderRadius: 7, background: 'transparent', border: '1px solid var(--ln)', color: 'var(--tlo)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+            <Icon name="chevLeft" size={15} />
+          </button>
         </div>
 
         <div style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--txl)', letterSpacing: '1.5px', padding: '0 10px 8px' }}>ĐIỀU HƯỚNG</div>
@@ -107,10 +119,16 @@ export default function AppShell() {
           </button>
         </div>
       </aside>
+      )}
 
       {/* Main */}
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg0)' }}>
         <header style={{ height: 54, flexShrink: 0, borderBottom: '1px solid var(--bg2)', display: 'flex', alignItems: 'center', gap: 16, padding: '0 22px', background: 'oklch(0.155 0.006 255)' }}>
+          {collapsed && (
+            <button onClick={toggleSidebar} title="Hiện thanh điều hướng" style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--ln)', color: 'var(--tmd)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              <Icon name="menu" size={16} />
+            </button>
+          )}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 600, letterSpacing: '1px', color: 'var(--in)', background: 'var(--inb)', border: '1px solid var(--in3)', padding: '4px 9px', borderRadius: 20 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--in)', animation: 'tcsPulse 2s infinite' }} />LIVE
           </span>
