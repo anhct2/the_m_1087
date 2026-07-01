@@ -87,14 +87,85 @@ def list_sessions(
     return {"total": total, "offset": offset, "limit": limit, "items": items}
 
 
+@router.post("/{session_id}/clips/{clip_id}/mark-best", status_code=200)
+def mark_best_match(session_id: int, clip_id: int, user: str = Depends(require_auth)):
+    """
+    Chốt tay (manual override): đặt clip_id làm best_match của session.
+    Worker-mapper sẽ không ghi đè lại ở lần chạy sau.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT session_id, event_time_vn, direction FROM gate_session_clips WHERE id = %s",
+                (clip_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Clip not found")
+        if row["session_id"] != session_id:
+            raise HTTPException(400, "Clip does not belong to this session")
+
+        with conn.cursor() as cur:
+            # Bỏ chốt cũ (nếu có) trong cùng nhóm session
+            cur.execute("""
+                UPDATE gate_session_clips
+                SET manual_best_match = FALSE,
+                    is_best_match     = FALSE
+                WHERE session_id    = %(sid)s
+                  AND event_time_vn = %(t)s
+                  AND direction     = %(d)s
+            """, {"sid": row["session_id"], "t": row["event_time_vn"], "d": row["direction"]})
+
+            # Chốt clip mới
+            cur.execute("""
+                UPDATE gate_session_clips
+                SET manual_best_match  = TRUE,
+                    is_best_match      = TRUE,
+                    manual_reviewed_by = %s,
+                    manual_reviewed_at = NOW()
+                WHERE id = %s
+            """, (user, clip_id))
+
+        conn.commit()
+
+    return {"ok": True, "clip_id": clip_id, "locked_by": user}
+
+
+@router.delete("/{session_id}/clips/{clip_id}/mark-best", status_code=200)
+def unmark_best_match(session_id: int, clip_id: int, _: str = Depends(require_auth)):
+    """Bỏ chốt tay — trả về session về chế độ tự động."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM gate_session_clips WHERE id = %s AND session_id = %s",
+                (clip_id, session_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(404, "Clip not found")
+
+            cur.execute("""
+                UPDATE gate_session_clips
+                SET manual_best_match  = FALSE,
+                    manual_reviewed_by = NULL,
+                    manual_reviewed_at = NULL
+                WHERE id = %s
+            """, (clip_id,))
+
+        conn.commit()
+
+    return {"ok": True, "clip_id": clip_id}
+
+
 @router.get("/{session_id}/clips")
 def get_clips(session_id: int, _=Depends(require_auth)):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT frigate_event_id, camera, frigate_label, frigate_score,
+                SELECT id, frigate_event_id, camera, frigate_label, frigate_score,
                     delta_seconds, clip_finalized, codec, snapshot_url, clip_url,
-                    match_score, is_best_match, direction, user_name, label, method,
+                    match_score, is_best_match, manual_best_match,
+                    manual_reviewed_by, manual_reviewed_at,
+                    direction, user_name, label, method,
                     (event_start_time AT TIME ZONE 'Asia/Ho_Chi_Minh') AS start_local,
                     (event_end_time   AT TIME ZONE 'Asia/Ho_Chi_Minh') AS end_local
                 FROM gate_session_clips

@@ -1,5 +1,5 @@
 -- DB Schema Dump: m1087
--- Generated   : 2026-06-30 09:37:36
+-- Generated   : 2026-07-01 07:37:29
 -- Schemas     : public, enroll
 -- NOTE: DDL only — no data
 
@@ -48,7 +48,7 @@ CREATE TABLE "public"."gate_events" (
     "inserted_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 1,877
+-- rows: 1,994
 
 -- public.gate_session_clips
 CREATE TABLE "public"."gate_session_clips" (
@@ -79,9 +79,12 @@ CREATE TABLE "public"."gate_session_clips" (
     "is_best_match" BOOLEAN DEFAULT false,
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now(),
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    "manual_best_match" BOOLEAN DEFAULT false NOT NULL,
+    "manual_reviewed_by" TEXT,
+    "manual_reviewed_at" TIMESTAMP WITH TIME ZONE,
     PRIMARY KEY ("id")
 );
--- rows: 3,976
+-- rows: 4,279
 
 -- public.mapping_runs
 CREATE TABLE "public"."mapping_runs" (
@@ -95,7 +98,7 @@ CREATE TABLE "public"."mapping_runs" (
     "notes" TEXT,
     PRIMARY KEY ("id")
 );
--- rows: 3,250
+-- rows: 3,503
 
 -- public.poll_state
 CREATE TABLE "public"."poll_state" (
@@ -138,7 +141,7 @@ CREATE TABLE "public"."scrape_runs" (
     "tomorrow_available" BOOLEAN,
     PRIMARY KEY ("id")
 );
--- rows: 72
+-- rows: 84
 
 -- public.unlock_map
 CREATE TABLE "public"."unlock_map" (
@@ -175,7 +178,7 @@ CREATE TABLE "public"."video_clips" (
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("clip_id")
 );
--- rows: 306
+-- rows: 906
 
 -- public.video_extraction_requests
 CREATE TABLE "public"."video_extraction_requests" (
@@ -189,7 +192,7 @@ CREATE TABLE "public"."video_extraction_requests" (
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("request_id")
 );
--- rows: 102
+-- rows: 302
 
 -- public.video_worker_logs
 CREATE TABLE "public"."video_worker_logs" (
@@ -201,7 +204,7 @@ CREATE TABLE "public"."video_worker_logs" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("log_id")
 );
--- rows: 780
+-- rows: 812
 
 -- ============================================================
 --  TABLES — schema: enroll
@@ -227,7 +230,7 @@ CREATE TABLE "enroll"."camera_clip_results" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 902
+-- rows: 968
 
 -- enroll.enroll_sessions
 CREATE TABLE "enroll"."enroll_sessions" (
@@ -256,7 +259,7 @@ CREATE TABLE "enroll"."enroll_sessions" (
     "recognition_sim" DOUBLE PRECISION,
     PRIMARY KEY ("id")
 );
--- rows: 522
+-- rows: 564
 
 -- enroll.job_queue
 CREATE TABLE "enroll"."job_queue" (
@@ -280,7 +283,7 @@ CREATE TABLE "enroll"."job_queue" (
     "direction" TEXT DEFAULT 'incoming'::text NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 522
+-- rows: 564
 
 -- enroll.person_profiles
 CREATE TABLE "enroll"."person_profiles" (
@@ -390,7 +393,7 @@ WITH unlock_events AS (
             u.raw_hex,
             'incoming'::text AS direction
            FROM door_opens d
-             JOIN unlock_events u ON u.event_time >= (d.event_time - '00:00:05'::interval) AND u.event_time <= (d.event_time + '00:00:10'::interval)
+             JOIN unlock_events u ON u.event_time >= (d.event_time - '00:00:05'::interval) AND u.event_time <= (d.event_time + '00:00:15'::interval)
           ORDER BY d.id, (abs(EXTRACT(epoch FROM u.event_time - d.event_time)))
         ), outgoing AS (
          SELECT d.id AS door_id,
@@ -428,6 +431,72 @@ WITH unlock_events AS (
            FROM outgoing) s
      LEFT JOIN unlock_map m ON m.hex_key::text = s.raw_hex::text
   ORDER BY s.event_time DESC;;
+
+CREATE OR REPLACE VIEW "public"."gate_sessions_v2" AS
+WITH door_opens_raw AS (
+         SELECT gate_events.id,
+            gate_events.event_time
+           FROM gate_events
+          WHERE gate_events.method::text = 'door_state'::text AND gate_events.door_state::text = 'open'::text
+        ), door_opens_flagged AS (
+         SELECT door_opens_raw.id,
+            door_opens_raw.event_time,
+                CASE
+                    WHEN lag(door_opens_raw.event_time) OVER (ORDER BY door_opens_raw.event_time) IS NULL THEN 1
+                    WHEN (door_opens_raw.event_time - lag(door_opens_raw.event_time) OVER (ORDER BY door_opens_raw.event_time)) > '00:00:10'::interval THEN 1
+                    ELSE 0
+                END AS is_new_session
+           FROM door_opens_raw
+        ), door_opens_grouped AS (
+         SELECT door_opens_flagged.id,
+            door_opens_flagged.event_time,
+            sum(door_opens_flagged.is_new_session) OVER (ORDER BY door_opens_flagged.event_time) AS session_id
+           FROM door_opens_flagged
+        ), door_sessions AS (
+         SELECT door_opens_grouped.session_id,
+            min(door_opens_grouped.id) AS door_id,
+            min(door_opens_grouped.event_time) AS session_start,
+            max(door_opens_grouped.event_time) AS session_end
+           FROM door_opens_grouped
+          GROUP BY door_opens_grouped.session_id
+        ), unlock_events AS (
+         SELECT gate_events.id,
+            gate_events.event_time,
+            gate_events.method,
+            gate_events.raw_hex
+           FROM gate_events
+          WHERE gate_events.method::text = ANY (ARRAY['password'::character varying, 'fingerprint'::character varying, 'card'::character varying, 'remote'::character varying]::text[])
+        ), sessions_with_unlock AS (
+         SELECT s_1.door_id,
+            s_1.session_start,
+            s_1.session_end,
+            u.id AS unlock_id,
+            u.method AS unlock_method,
+            u.raw_hex AS unlock_raw_hex
+           FROM door_sessions s_1
+             LEFT JOIN LATERAL ( SELECT ue.id,
+                    ue.method,
+                    ue.raw_hex,
+                    ue.event_time
+                   FROM unlock_events ue
+                  WHERE ue.event_time >= (s_1.session_start - '00:00:05'::interval) AND ue.event_time <= (s_1.session_end + '00:00:30'::interval)
+                  ORDER BY (abs(EXTRACT(epoch FROM ue.event_time - s_1.session_end)))
+                 LIMIT 1) u ON true
+        )
+ SELECT (s.session_start AT TIME ZONE 'Asia/Ho_Chi_Minh'::text) AS event_time_vn,
+        CASE
+            WHEN s.unlock_id IS NOT NULL THEN 'incoming'::text
+            ELSE 'outgoing'::text
+        END AS direction,
+    COALESCE(m.user_name, 'Unknown'::character varying) AS user_name,
+    COALESCE(m.label, s.unlock_raw_hex) AS label,
+    s.unlock_method AS method,
+    s.unlock_raw_hex AS raw_hex,
+    s.door_id,
+    s.unlock_id
+   FROM sessions_with_unlock s
+     LEFT JOIN unlock_map m ON m.hex_key::text = s.unlock_raw_hex::text
+  ORDER BY s.session_start DESC;;
 
 CREATE OR REPLACE VIEW "public"."v_gate_clips_all" AS
 SELECT session_id,
@@ -645,6 +714,9 @@ CREATE INDEX idx_gsc_face ON public.gate_session_clips USING btree (face_label) 
 
 -- public.gate_session_clips
 CREATE INDEX idx_gsc_finalized ON public.gate_session_clips USING btree (clip_finalized);
+
+-- public.gate_session_clips
+CREATE UNIQUE INDEX idx_gsc_manual_one_per_session ON public.gate_session_clips USING btree (session_id, event_time_vn, direction) WHERE (manual_best_match = true);
 
 -- public.gate_session_clips
 CREATE INDEX idx_gsc_session_id ON public.gate_session_clips USING btree (session_id);
@@ -1657,4 +1729,4 @@ CREATE OR REPLACE FUNCTION public.vector_typmod_in(cstring[])
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$vector_typmod_in$function$;
 
--- End of dump — 2026-06-30 09:37:36
+-- End of dump — 2026-07-01 07:37:29

@@ -1,7 +1,7 @@
 """
 Tất cả SQL queries cho worker-dahua.
 
-NOTE: gate_sessions là VIEW trong schema hiện có.
+NOTE: gate_sessions_v2 là VIEW trong schema hiện có.
 Điều chỉnh tên cột nếu cần cho phù hợp với schema thực tế.
 """
 
@@ -32,7 +32,7 @@ def get_unprocessed_sessions() -> list[dict]:
                 gs.door_id::text,
                 gs.event_time_vn,
                 gs.direction
-            FROM gate_sessions gs
+            FROM gate_sessions_v2 gs
             LEFT JOIN video_extraction_requests ver
                 ON ver.session_id = gs.door_id::text
             WHERE ver.request_id IS NULL

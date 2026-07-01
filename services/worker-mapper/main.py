@@ -45,7 +45,7 @@ signal.signal(signal.SIGINT,  _stop)
 
 
 def _earliest_gate_session(cfg) -> datetime:
-    """Lấy event_time_vn sớm nhất từ gate_sessions."""
+    """Lấy event_time_vn sớm nhất từ gate_sessions_v2."""
     conn = psycopg2.connect(
         host=cfg.pg_host, port=cfg.pg_port,
         dbname=cfg.pg_db, user=cfg.pg_user, password=cfg.pg_pass,
@@ -53,7 +53,7 @@ def _earliest_gate_session(cfg) -> datetime:
     )
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT MIN(event_time_vn) AS earliest FROM gate_sessions")
+            cur.execute("SELECT MIN(event_time_vn) AS earliest FROM gate_sessions_v2")
             row = cur.fetchone()
     finally:
         conn.close()

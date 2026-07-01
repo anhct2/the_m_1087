@@ -439,7 +439,7 @@ def backfill(body: dict, _=Depends(require_auth)):
                 cur.execute(f"""
                     SELECT gs.door_id, gs.unlock_id,
                            gs.event_time_vn, gs.label AS room_label
-                    FROM gate_sessions gs
+                    FROM gate_sessions_v2 gs
                     WHERE gs.method   = 'password'
                       AND gs.label    LIKE 'P.%%'
                       AND gs.direction = 'incoming'

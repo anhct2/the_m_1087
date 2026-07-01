@@ -35,7 +35,7 @@ def poll_new_gate_events(since_min: int = 15) -> List[dict]:
             cur.execute("""
                 SELECT gs.door_id::text, gs.unlock_id::text, gs.event_time_vn,
                        gs.label AS room_label, 'incoming'::text AS direction
-                FROM gate_sessions gs
+                FROM gate_sessions_v2 gs
                 WHERE gs.method      = 'password'
                   AND gs.label       LIKE 'P.%%'
                   AND gs.direction   = 'incoming'

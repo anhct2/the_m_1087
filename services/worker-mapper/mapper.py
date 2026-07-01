@@ -19,9 +19,22 @@ from frigate_client import FrigateClient
 log   = logging.getLogger(__name__)
 VN_TZ = timezone(timedelta(hours=7))
 
-CAMERAS      = {"incoming": ["N1", "S1", "S2"], "outgoing": ["S2", "S1", "N1"]}
+CAMERAS = {"incoming": ["N1", "S1", "S2"], "outgoing": ["S2", "S1", "N1"]}
+
 SCORE_W_TIME = 0.1
 SCORE_W_CONF = 10.0
+
+# Asymmetric time window (off_before, off_after) relative to gate event_time_vn.
+# off_before âm = lùi lại trước sự kiện, off_after dương = mở về phía sau.
+WINDOWS: dict[tuple[str, str], tuple[int, int]] = {
+    ("incoming", "N1"): (-30, 20),
+    ("incoming", "S1"): (-10, 35),
+    ("incoming", "S2"): (-10, 35),
+    ("outgoing", "S2"): (-35, 10),
+    ("outgoing", "S1"): (-35, 10),
+    ("outgoing", "N1"): (-10, 36),
+}
+DEFAULT_WINDOW = (-15, 15)
 
 
 # ── DB ───────────────────────────────────────────────────────
@@ -54,7 +67,7 @@ def _fetch_sessions(conn, since: datetime, until: datetime) -> list[dict]:
         cur.execute("""
             SELECT door_id, unlock_id, event_time_vn, direction,
                    user_name, label, method, raw_hex
-            FROM gate_sessions
+            FROM gate_sessions_v2
             WHERE event_time_vn >= %(s)s AND event_time_vn < %(u)s
               AND direction IN ('incoming','outgoing')
             ORDER BY event_time_vn
@@ -90,7 +103,11 @@ def _upsert(conn, rows: list[dict]):
                 snapshot_url   = EXCLUDED.snapshot_url,
                 clip_url       = EXCLUDED.clip_url,
                 match_score    = EXCLUDED.match_score,
-                is_best_match  = EXCLUDED.is_best_match,
+                is_best_match  = CASE
+                                     WHEN gate_session_clips.manual_best_match
+                                     THEN gate_session_clips.is_best_match
+                                     ELSE EXCLUDED.is_best_match
+                                  END,
                 updated_at     = NOW()
         """, rows, page_size=100)
     conn.commit()
@@ -120,22 +137,25 @@ def _to_utc(dt: datetime) -> datetime:
 def _build_candidates_for_session(
     session: dict,
     client: FrigateClient,
-    window_sec: int,
+    window_sec: int = None,
 ) -> tuple[list[dict], int]:
     """
-    Query Frigate events trong window cho 1 session.
-    Trả về tất cả candidates (chưa set is_best_match).
+    Query Frigate events trong asymmetric window cho 1 session.
+    window_sec không còn dùng — giữ signature để không break caller cũ.
     """
     gate_utc  = _to_utc(session["event_time_vn"])
-    after_ts  = gate_utc.timestamp() - window_sec
-    before_ts = gate_utc.timestamp() + window_sec
-    cameras   = CAMERAS.get(session["direction"], ["N1", "S1"])
+    direction = session["direction"]
+    cameras   = CAMERAS.get(direction, ["N1", "S1"])
     cam_prio  = {c: i for i, c in enumerate(cameras)}
 
     candidates = []
     skipped    = 0
 
     for cam in cameras:
+        off_before, off_after = WINDOWS.get((direction, cam), DEFAULT_WINDOW)
+        after_ts  = gate_utc.timestamp() + off_before
+        before_ts = gate_utc.timestamp() + off_after
+
         try:
             events = client.get_events(cam, after_ts, before_ts)
         except Exception as e:
@@ -187,7 +207,7 @@ def _build_candidates_for_session(
     return candidates, skipped
 
 
-def _resolve_conflicts(all_candidates: list[dict]) -> list[dict]:
+def _resolve_conflicts(all_candidates: list[dict], locked_events: frozenset = frozenset()) -> list[dict]:
     """
     Resolve tranh chấp: mỗi (frigate_event_id, camera) chỉ là best_match
     của 1 session duy nhất — session nào có delta nhỏ nhất giành quyền.
@@ -196,6 +216,13 @@ def _resolve_conflicts(all_candidates: list[dict]) -> list[dict]:
       1781840395-N1 xuất hiện ở session 542 (delta=6.3s) và 377 (delta=43.5s)
       → session 542 giành vì delta nhỏ hơn
     """
+    # Loại event đã bị khóa bởi chốt tay khỏi vòng tranh chấp
+    if locked_events:
+        all_candidates = [
+            c for c in all_candidates
+            if (c["frigate_event_id"], c["camera"]) not in locked_events
+        ]
+
     # Bước 1: với mỗi session, tìm best candidate PER CAMERA
     # key = (session_id, event_time_vn, direction)
     session_best_per_cam: dict[tuple, dict[str, dict]] = defaultdict(dict)
@@ -253,6 +280,26 @@ def _resolve_conflicts(all_candidates: list[dict]) -> list[dict]:
     return result
 
 
+# ── Manual-lock helpers ──────────────────────────────────────
+
+def _fetch_locks(conn) -> tuple[set, set]:
+    """
+    Trả về 2 tập:
+      locked_sessions — (session_id, event_time_vn_str, direction) đã chốt tay → skip hoàn toàn
+      locked_events   — (frigate_event_id, camera) đã bị khóa → loại khỏi tranh chấp
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT session_id, event_time_vn, direction, frigate_event_id, camera
+            FROM gate_session_clips
+            WHERE manual_best_match = TRUE
+        """)
+        rows = cur.fetchall()
+    locked_sessions = {(r["session_id"], str(r["event_time_vn"]), r["direction"]) for r in rows}
+    locked_events   = {(r["frigate_event_id"], r["camera"]) for r in rows}
+    return locked_sessions, locked_events
+
+
 # ── Public entry point ───────────────────────────────────────
 
 def run_mapper(cfg, since: datetime, until: datetime, dry_run: bool = False) -> dict:
@@ -266,20 +313,29 @@ def run_mapper(cfg, since: datetime, until: datetime, dry_run: bool = False) -> 
     sessions = _fetch_sessions(conn, since, until)
     log.info(f"Sessions: {len(sessions)} [{since.strftime('%H:%M')} – {until.strftime('%H:%M')} VN]")
 
+    locked_sessions, locked_events = _fetch_locks(conn)
+    if locked_sessions:
+        log.info(f"Locked (manual): {len(locked_sessions)} sessions, {len(locked_events)} events")
+
     all_candidates = []
     total_skipped  = 0
 
     for i, session in enumerate(sessions, 1):
-        candidates, skipped = _build_candidates_for_session(session, client, cfg.window_sec)
+        sk = (session["door_id"], str(session["event_time_vn"]), session["direction"])
+        tag = f"[{i:03d}/{len(sessions)}]"
+        if sk in locked_sessions:
+            log.info(f"{tag} {session['event_time_vn']} {session['direction']:8s} → chốt tay, bỏ qua")
+            continue
+
+        candidates, skipped = _build_candidates_for_session(session, client)
         total_skipped += skipped
         all_candidates.extend(candidates)
-        tag = f"[{i:03d}/{len(sessions)}]"
         log.info(f"{tag} {session['event_time_vn']} {session['direction']:8s}"
                  f" → {len(candidates)} candidates, {skipped} active skipped")
 
     # Resolve conflicts across sessions TRƯỚC khi ghi DB
     log.info(f"Resolving conflicts across {len(all_candidates)} total candidates...")
-    resolved = _resolve_conflicts(all_candidates)
+    resolved = _resolve_conflicts(all_candidates, frozenset(locked_events))
 
     matched = sum(1 for r in resolved if r["is_best_match"])
     log.info(f"After resolve: {matched} sessions have best_match, {len(resolved)} total rows")
