@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Card, Badge, DirBadge, Icon, Spinner } from '../components/UI'
-import { getSessions, getSessionClips } from '../api/client'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Card, Badge, DirBadge, Icon, Spinner, Btn } from '../components/UI'
+import { RoomCheckboxFilter } from '../components/RoomFilter'
+import { AssignPersonModal } from '../components/AssignPersonModal'
+import { getSessions, getSession, getSessionClips, assignGateSession } from '../api/client'
 import { fmtTime, fmtShortDate, timeAgo, snapUrl } from '../utils'
 
 const CAM_COLORS = { N1: 'oklch(0.32 0.03 255)', S1: 'oklch(0.30 0.04 200)', S2: 'oklch(0.33 0.03 152)' }
@@ -21,24 +24,42 @@ export default function GateLog() {
   const [sel, setSel]         = useState(0)
   const [clips, setClips]     = useState([])
   const [clipsLoading, setClipsLoading] = useState(false)
+  const [assigning, setAssigning] = useState(false)
 
   // Filter state
-  const [filterDir, setFilterDir]   = useState('')
-  const [filterName, setFilterName] = useState('')
-  const [filterRoom, setFilterRoom] = useState('')
+  const [filterDir, setFilterDir]     = useState('')
+  const [filterName, setFilterName]   = useState('')
+  const [filterRooms, setFilterRooms] = useState([])
+
+  const [searchParams] = useSearchParams()
+  const focusId = searchParams.get('focus')
+  const focusAppliedRef = useRef(false)
 
   const load = useCallback((off = 0) => {
     setLoading(true)
     const params = { limit: PAGE, offset: off }
     if (filterDir)  params.direction = filterDir
     if (filterName) params.user_name = filterName
-    if (filterRoom) params.room      = filterRoom
+    if (filterRooms.length) params.room = filterRooms.join(',')
     getSessions(params)
       .then(r => { setItems(r.data.items); setTotal(r.data.total); setOffset(off); setSel(0) })
       .finally(() => setLoading(false))
-  }, [filterDir, filterName, filterRoom])
+  }, [filterDir, filterName, filterRooms])
 
-  useEffect(() => { load(0) }, [])  // initial load
+  useEffect(() => { load(0) }, [filterRooms])  // initial load + when room checkboxes change
+
+  // Deep-link từ Enroll: ?focus=<door_id> — chọn đúng session đó dù nó
+  // không nằm trong trang/bộ lọc hiện tại (door_id == session_id ở đây).
+  useEffect(() => {
+    if (!focusId || focusAppliedRef.current || loading) return
+    const idx = items.findIndex(x => String(x.session_id) === String(focusId))
+    if (idx >= 0) { focusAppliedRef.current = true; setSel(idx); return }
+    getSession(focusId).then(r => {
+      focusAppliedRef.current = true
+      setItems(prev => [r.data, ...prev])
+      setSel(0)
+    }).catch(() => { focusAppliedRef.current = true })
+  }, [items, loading, focusId])
 
   // Load clips for selected session
   useEffect(() => {
@@ -55,6 +76,7 @@ export default function GateLog() {
   const totalPages = Math.ceil(total / PAGE)
   const currentPage = Math.floor(offset / PAGE) + 1
   const se = items[sel]
+  const seIsIn = se?.direction === 'incoming'
 
   // Build 3-camera display for detail panel
   const detailCams = se
@@ -64,8 +86,6 @@ export default function GateLog() {
         { label: 'S2', eventId: se.event_id_s2 },
       ]
     : []
-
-  const chip = { display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: '6px 11px' }
 
   return (
     <div style={{ padding: '20px 24px' }}>
@@ -90,13 +110,7 @@ export default function GateLog() {
           onKeyDown={e => e.key === 'Enter' && load(0)}
           style={{ background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: '7px 11px', color: 'var(--thi)', fontSize: 12.5, fontFamily: 'inherit', width: 150, outline: 'none' }}
         />
-        <input
-          placeholder="Phòng (P.301,P.302)…"
-          value={filterRoom}
-          onChange={e => setFilterRoom(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && load(0)}
-          style={{ background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: '7px 11px', color: 'var(--thi)', fontSize: 12.5, fontFamily: 'inherit', width: 160, outline: 'none' }}
-        />
+        <RoomCheckboxFilter value={filterRooms} onChange={setFilterRooms} />
         <button
           onClick={() => load(0)}
           style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--in)', color: 'oklch(0.16 0.03 152)', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
@@ -172,7 +186,12 @@ export default function GateLog() {
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 18px', borderBottom: '1px solid var(--bg2)' }}>
                 <span style={{ fontSize: 12.5, fontWeight: 600 }}>Chi tiết sự kiện</span>
-                <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>Session #{se.session_id}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>Session #{se.session_id}</span>
+                  <Link to={`/enroll/sessions/gate/${se.session_id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--in)', textDecoration: 'none', border: '1px solid var(--in3)', borderRadius: 6, padding: '4px 9px' }}>
+                    <Icon name="users" size={12} />Xem ở Enroll
+                  </Link>
+                </div>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: 18 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20, marginBottom: 16 }}>
@@ -188,6 +207,12 @@ export default function GateLog() {
                     <div><span style={{ color: 'var(--txl)' }}>Score </span><span style={{ color: 'var(--in)', fontFamily: 'var(--mono)' }}>{se.match_score?.toFixed(3) ?? '—'}</span></div>
                   </div>
                 </div>
+
+                {seIsIn && (
+                  <div style={{ marginBottom: 16 }}>
+                    <Btn variant="ghost" onClick={() => setAssigning(true)}><Icon name="edit" size={12} />Gán phòng thủ công</Btn>
+                  </div>
+                )}
 
                 {clipsLoading ? (
                   <div style={{ padding: 24, display: 'flex', justifyContent: 'center' }}><Spinner /></div>
@@ -236,6 +261,15 @@ export default function GateLog() {
           )}
         </Card>
       </div>
+
+      {assigning && se && (
+        <AssignPersonModal
+          title={`Gán phòng thủ công · session #${se.session_id}`}
+          defaultRoom={se.label}
+          onClose={() => setAssigning(false)}
+          onAssign={payload => assignGateSession(se.session_id, { ...payload, source: 'gate_log' })}
+        />
+      )}
     </div>
   )
 }

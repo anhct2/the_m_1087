@@ -9,6 +9,12 @@ router = APIRouter()
 ROOMS = [f"P.{f}0{r}" for f in range(2, 8) for r in range(1, 3)]
 
 
+@router.get("/codes")
+def room_codes(_=Depends(require_auth)):
+    """Danh sách mã phòng — dùng cho bộ lọc checkbox (Gate Log, Enroll)."""
+    return ROOMS
+
+
 @router.get("/status")
 def room_status(_=Depends(require_auth)):
     """Trạng thái phòng: chỉ dựa trên events hôm nay.

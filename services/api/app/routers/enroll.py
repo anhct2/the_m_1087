@@ -289,26 +289,57 @@ def get_profile(person_id: str, _=Depends(require_auth)):
                 raise HTTPException(404)
 
             cur.execute("""
-                SELECT es.id, es.room_label, es.event_time_vn, es.status,
-                       es.overall_quality, psm.is_new, psm.merge_sim
+                SELECT es.id, es.door_id, es.direction, es.room_label, es.event_time_vn,
+                       es.status, es.overall_quality, psm.is_new, psm.merge_sim,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.camera_clip_results ccr
+                        WHERE ccr.enroll_session_id = es.id AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS snap_event_id
                 FROM enroll.enroll_sessions es
                 JOIN enroll.person_session_map psm ON psm.enroll_session_id = es.id
                 WHERE psm.person_id = %(pid)s
-                ORDER BY es.event_time_vn DESC LIMIT 20
+                ORDER BY es.event_time_vn DESC LIMIT 60
             """, {"pid": person_id})
             sessions = cur.fetchall()
 
+            session_ids = [s["id"] for s in sessions]
+            clips = []
+            if session_ids:
+                cur.execute("""
+                    SELECT ccr.enroll_session_id, ccr.camera_id, ccr.camera_order,
+                           ccr.frigate_event_id, ccr.confidence, ccr.stopped_here,
+                           es.event_time_vn, es.door_id, es.direction
+                    FROM enroll.camera_clip_results ccr
+                    JOIN enroll.enroll_sessions es ON es.id = ccr.enroll_session_id
+                    WHERE ccr.enroll_session_id = ANY(%(sids)s) AND ccr.frigate_event_id IS NOT NULL
+                    ORDER BY es.event_time_vn DESC, ccr.camera_order
+                """, {"sids": session_ids})
+                clips = cur.fetchall()
+
             cur.execute("""
-                SELECT room_id, entry_ts, exit_ts, entry_confidence, exit_confidence
+                SELECT room_id, entry_ts, exit_ts, entry_confidence, exit_confidence,
+                       entry_door_id, exit_door_id
                 FROM enroll.room_stays WHERE person_id = %(pid)s
                 ORDER BY entry_ts DESC
             """, {"pid": person_id})
             stays = cur.fetchall()
 
+            cur.execute("""
+                SELECT ma.id, ma.door_id, ma.direction, ma.room_label, ma.source,
+                       ma.assigned_by, ma.assigned_at
+                FROM enroll.manual_assignments ma
+                WHERE ma.person_id = %(pid)s
+                ORDER BY ma.assigned_at DESC
+            """, {"pid": person_id})
+            manual_log = cur.fetchall()
+
     return {
         **dict(row),
-        "sessions": [dict(s) for s in sessions],
-        "stays":    [dict(s) for s in stays],
+        "sessions":          [dict(s) for s in sessions],
+        "clips":             [dict(c) for c in clips],
+        "stays":             [dict(s) for s in stays],
+        "manual_assignments": [dict(m) for m in manual_log],
     }
 
 
@@ -559,9 +590,100 @@ def retry_session(session_id: str, _=Depends(require_auth)):
     return {"ok": True, "job_id": job_id}
 
 
-# ── Gán thủ công profile vào session ────────────────────────────
+# ── Gán thủ công profile vào session (core logic, dùng chung) ───
+def _apply_manual_assignment(
+    cur, *, session_id: str, door_id: str, direction: str, event_time_vn,
+    room_label: str, unlock_id, profile_id, new_name, new_room, source: str, user: str,
+):
+    """
+    Áp dụng gán người/phòng thủ công cho MỘT enroll_session đã tồn tại.
+    Dùng chung bởi:
+      - POST /sessions/{id}/assign        (session đã có sẵn, id = enroll_sessions.id)
+      - POST /gate-sessions/{door_id}/assign (session có thể vừa được tạo tại chỗ)
+
+    Hành vi thống nhất bất kể incoming/outgoing ("gán tay coi như enroll đã
+    xác định người + gán phòng giống incoming"):
+      - Luôn set/update known_room của profile theo phòng được gán.
+      - Luôn đảm bảo có 1 room_stay đang mở (mở mới nếu chưa có) — mô phỏng
+        đúng bước upsert_profile() của worker-enroll khi enroll một người mới.
+      - Nếu là outgoing thì đóng luôn room_stay đó (rời phòng).
+      - Ghi lại vào enroll.manual_assignments để có audit trail.
+    """
+    if not profile_id:
+        cur.execute("""
+            INSERT INTO enroll.person_profiles
+                (display_name, known_room, confidence_lvl)
+            VALUES (%(name)s, %(room)s, 'gate_code')
+            RETURNING id
+        """, {"name": new_name, "room": new_room or room_label or None})
+        profile_id = str(cur.fetchone()["id"])
+    else:
+        final_room = new_room or room_label
+        if final_room:
+            cur.execute(
+                "UPDATE enroll.person_profiles SET known_room = %(room)s, updated_at = now() WHERE id = %(pid)s",
+                {"room": final_room, "pid": profile_id},
+            )
+
+    cur.execute("""
+        INSERT INTO enroll.person_session_map
+            (person_id, enroll_session_id, is_new, merge_sim)
+        VALUES (%(pid)s, %(sid)s, false, 1.0)
+        ON CONFLICT (person_id, enroll_session_id) DO NOTHING
+    """, {"pid": profile_id, "sid": session_id})
+
+    # Gán tay là quyết định cuối cùng của người vận hành — luôn ghi đè
+    # recognized_person_id/sim (kể cả khi trước đó auto-match ra người khác),
+    # không COALESCE giữ giá trị cũ.
+    cur.execute("""
+        UPDATE enroll.enroll_sessions
+        SET status               = 'enrolled',
+            persons_enrolled     = GREATEST(persons_enrolled, 1),
+            recognized_person_id = %(pid)s,
+            recognition_sim      = 1.0,
+            finished_at          = COALESCE(finished_at, now())
+        WHERE id = %(id)s
+    """, {"pid": profile_id, "id": session_id})
+
+    unlock_id_str = str(unlock_id) if unlock_id is not None else None
+
+    if direction == "outgoing":
+        cur.execute(
+            "SELECT enroll.close_room_stay(%s, %s, %s, %s, 'manual') AS n",
+            (profile_id, event_time_vn, door_id, unlock_id_str),
+        )
+    else:
+        cur.execute(
+            "SELECT id FROM enroll.room_stays WHERE person_id = %(pid)s AND exit_ts IS NULL",
+            {"pid": profile_id},
+        )
+        if not cur.fetchone():
+            cur.execute("""
+                INSERT INTO enroll.room_stays
+                    (person_id, room_id, entry_door_id, entry_unlock_id, entry_ts, entry_confidence)
+                VALUES (%(pid)s, %(room)s, %(d)s, %(u)s, %(t)s, 'manual')
+            """, {"pid": profile_id, "room": new_room or room_label or "",
+                  "d": door_id, "u": unlock_id_str, "t": event_time_vn})
+
+    cur.execute("""
+        UPDATE enroll.person_profiles
+        SET last_seen_ts = now(), enroll_count = enroll_count + 1,
+            updated_at = now()
+        WHERE id = %(pid)s
+    """, {"pid": profile_id})
+
+    cur.execute("""
+        INSERT INTO enroll.manual_assignments
+            (door_id, direction, enroll_session_id, person_id, room_label, source, assigned_by)
+        VALUES (%(d)s, %(dir)s, %(sid)s, %(pid)s, %(room)s, %(src)s, %(by)s)
+    """, {"d": door_id, "dir": direction, "sid": session_id, "pid": profile_id,
+          "room": new_room or room_label or None, "src": source, "by": user})
+
+    return profile_id
+
+
 @router.post("/sessions/{session_id}/assign")
-def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
+def assign_session(session_id: str, body: dict, user: str = Depends(require_auth)):
     profile_id = (body.get("profile_id") or "").strip() or None
     new_name   = (body.get("display_name") or "").strip() or None
     new_room   = (body.get("known_room") or "").strip() or None
@@ -578,52 +700,190 @@ def assign_session(session_id: str, body: dict, _=Depends(require_auth)):
             if not ses:
                 raise HTTPException(404, "Session not found")
 
-            if not profile_id:
-                cur.execute("""
-                    INSERT INTO enroll.person_profiles
-                        (display_name, known_room, confidence_lvl)
-                    VALUES (%(name)s, %(room)s, 'gate_code')
-                    RETURNING id
-                """, {"name": new_name, "room": new_room or ses["room_label"]})
-                profile_id = str(cur.fetchone()["id"])
-
-            cur.execute("""
-                INSERT INTO enroll.person_session_map
-                    (person_id, enroll_session_id, is_new, merge_sim)
-                VALUES (%(pid)s, %(sid)s, false, 1.0)
-                ON CONFLICT (person_id, enroll_session_id) DO NOTHING
-            """, {"pid": profile_id, "sid": session_id})
-
-            if ses["direction"] == "outgoing":
-                # Gán nhận diện và đóng room_stay
-                cur.execute("""
-                    UPDATE enroll.enroll_sessions
-                    SET status               = 'enrolled',
-                        persons_enrolled     = GREATEST(persons_enrolled, 1),
-                        recognized_person_id = %(pid)s,
-                        recognition_sim      = 1.0
-                    WHERE id = %(id)s
-                """, {"pid": profile_id, "id": session_id})
-                cur.execute(
-                    "SELECT enroll.close_room_stay(%s, %s, %s, %s, 'manual') AS n",
-                    (profile_id, ses["event_time_vn"], ses["door_id"], ses["unlock_id"])
-                )
-            else:
-                cur.execute("""
-                    UPDATE enroll.enroll_sessions
-                    SET status = 'enrolled',
-                        persons_enrolled = GREATEST(persons_enrolled, 1)
-                    WHERE id = %(id)s
-                """, {"id": session_id})
-
-            cur.execute("""
-                UPDATE enroll.person_profiles
-                SET last_seen_ts = now(), enroll_count = enroll_count + 1,
-                    updated_at = now()
-                WHERE id = %(pid)s
-            """, {"pid": profile_id})
+            profile_id = _apply_manual_assignment(
+                cur, session_id=session_id, door_id=ses["door_id"], direction=ses["direction"],
+                event_time_vn=ses["event_time_vn"], room_label=ses["room_label"],
+                unlock_id=ses["unlock_id"], profile_id=profile_id, new_name=new_name,
+                new_room=new_room, source="enroll", user=user,
+            )
         conn.commit()
     return {"ok": True, "profile_id": profile_id}
+
+
+# ── Gate Log <-> Enroll unified sessions (1:1 với gate_sessions_v2) ──
+@router.get("/gate-sessions")
+def list_gate_sessions(
+    direction: Optional[str] = Query(None, pattern="^(incoming|outgoing)$"),
+    room:      Optional[str] = None,
+    user_name: Optional[str] = None,
+    status:    Optional[str] = None,
+    limit:     int = Query(50, ge=1, le=200),
+    offset:    int = Query(0, ge=0),
+    _=Depends(require_auth),
+):
+    """
+    Danh sách session lấy từ enroll.v_gate_sessions — view này bắt nguồn
+    từ gate_session_clips (is_best_match=TRUE), CHÍNH XÁC cùng tập dữ liệu
+    mà GET /api/sessions (Gate Log) đếm/liệt kê. Vì vậy với cùng bộ filter
+    (direction/room/user_name), tổng số session ở đây luôn khớp 1-1 với
+    Gate Log — kể cả những session chưa có job/enroll_session (hiện
+    effective_status = 'not_queued').
+    """
+    filters = ["1=1"]
+    params: dict = {}
+    if direction:
+        filters.append("direction = %(direction)s"); params["direction"] = direction
+    if room:
+        rooms = [r.strip() for r in room.split(",") if r.strip()]
+        filters.append("room_label = ANY(%(rooms)s)"); params["rooms"] = rooms
+    if user_name:
+        filters.append("gate_user_name ILIKE %(user_name)s"); params["user_name"] = f"%{user_name}%"
+    if status:
+        filters.append("effective_status = %(status)s"); params["status"] = status
+
+    where = " AND ".join(filters)
+    count_params = dict(params)
+    params.update({"limit": limit, "offset": offset})
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS total FROM enroll.v_gate_sessions WHERE {where}", count_params)
+            total = cur.fetchone()["total"]
+
+            cur.execute(f"""
+                SELECT * FROM enroll.v_gate_sessions
+                WHERE {where}
+                ORDER BY event_time_vn DESC
+                LIMIT %(limit)s OFFSET %(offset)s
+            """, params)
+            rows = cur.fetchall()
+
+    return {"items": [dict(r) for r in rows], "total": total}
+
+
+@router.get("/gate-sessions/{door_id}")
+def get_gate_session_detail(door_id: str, _=Depends(require_auth)):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM enroll.v_gate_sessions WHERE door_id = %(d)s", {"d": door_id})
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Session not found")
+
+            cur.execute("""
+                SELECT id, frigate_event_id, camera, frigate_label, frigate_score,
+                    delta_seconds, clip_finalized, codec, snapshot_url, clip_url,
+                    match_score, is_best_match, manual_best_match,
+                    (event_start_time AT TIME ZONE 'Asia/Ho_Chi_Minh') AS start_local,
+                    (event_end_time   AT TIME ZONE 'Asia/Ho_Chi_Minh') AS end_local
+                FROM gate_session_clips
+                WHERE session_id = %(d)s
+                ORDER BY match_score ASC
+            """, {"d": door_id})
+            gate_clips = cur.fetchall()
+
+            camera_clips, persons = [], []
+            if row["enroll_session_id"]:
+                cur.execute("""
+                    SELECT ccr.camera_id, ccr.camera_order, ccr.source_type,
+                           ccr.frames_processed, ccr.persons_detected,
+                           ccr.confidence, ccr.face_score,
+                           ccr.stopped_here, ccr.has_multi_person, ccr.has_occlusion,
+                           ccr.frigate_event_id,
+                           gsc.clip_url, gsc.clip_finalized, gsc.snapshot_url
+                    FROM enroll.camera_clip_results ccr
+                    LEFT JOIN gate_session_clips gsc ON gsc.id = ccr.gsc_id
+                    WHERE ccr.enroll_session_id = %(sid)s
+                    ORDER BY ccr.camera_order
+                """, {"sid": row["enroll_session_id"]})
+                camera_clips = cur.fetchall()
+
+                cur.execute("""
+                    SELECT pp.id, pp.display_name, pp.known_room, pp.confidence_lvl,
+                           pp.face_quality, pp.gender, pp.age_estimate,
+                           pp.enroll_count, pp.last_seen_ts,
+                           psm.is_new, psm.merge_sim
+                    FROM enroll.person_profiles pp
+                    JOIN enroll.person_session_map psm ON psm.person_id = pp.id
+                    WHERE psm.enroll_session_id = %(sid)s
+                """, {"sid": row["enroll_session_id"]})
+                persons = cur.fetchall()
+
+            cur.execute("""
+                SELECT ma.id, ma.person_id, ma.room_label, ma.source, ma.assigned_by, ma.assigned_at,
+                       pp.display_name
+                FROM enroll.manual_assignments ma
+                LEFT JOIN enroll.person_profiles pp ON pp.id = ma.person_id
+                WHERE ma.door_id = %(d)s
+                ORDER BY ma.assigned_at DESC
+            """, {"d": door_id})
+            manual_log = cur.fetchall()
+
+    return {
+        **dict(row),
+        "gate_clips":         [dict(c) for c in gate_clips],
+        "camera_clips":       [dict(c) for c in camera_clips],
+        "persons":            [dict(p) for p in persons],
+        "manual_assignments": [dict(m) for m in manual_log],
+    }
+
+
+@router.post("/gate-sessions/{door_id}/assign")
+def assign_gate_session(door_id: str, body: dict, user: str = Depends(require_auth)):
+    """
+    Gán người/phòng thủ công theo door_id (khoá dùng chung giữa Gate Log
+    và Enroll). Nếu chưa có enroll_sessions cho door_id này (chưa được
+    worker xử lý / chưa nằm trong diện backfill) thì tạo mới tại chỗ rồi
+    áp dụng gán — coi như một lần "enroll" thủ công.
+    """
+    profile_id = (body.get("profile_id") or "").strip() or None
+    new_name   = (body.get("display_name") or "").strip() or None
+    new_room   = (body.get("known_room") or "").strip() or None
+    source     = (body.get("source") or "enroll").strip()
+
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT session_id AS door_id, unlock_id, direction, label AS room_label, event_time_vn
+                FROM gate_session_clips
+                WHERE session_id = %(d)s AND is_best_match = TRUE
+                LIMIT 1
+            """, {"d": door_id})
+            gate = cur.fetchone()
+            if not gate:
+                raise HTTPException(404, "Gate session not found")
+
+            cur.execute(
+                "SELECT id, unlock_id FROM enroll.enroll_sessions WHERE door_id = %(d)s AND direction = %(dir)s",
+                {"d": door_id, "dir": gate["direction"]},
+            )
+            es = cur.fetchone()
+
+            if es:
+                session_id = str(es["id"])
+                unlock_id  = es["unlock_id"]
+            else:
+                unlock_id = gate["unlock_id"] if gate["unlock_id"] is not None \
+                    else gate["event_time_vn"].strftime("%Y-%m-%d %H:%M:%S")
+                cur.execute("""
+                    INSERT INTO enroll.enroll_sessions
+                        (door_id, unlock_id, event_time_vn, room_label, direction,
+                         status, person_count, persons_enrolled)
+                    VALUES (%(d)s, %(u)s, %(t)s, %(r)s, %(dir)s, 'processing', 1, 0)
+                    RETURNING id
+                """, {"d": door_id, "u": str(unlock_id), "t": gate["event_time_vn"],
+                      "r": gate["room_label"] or "", "dir": gate["direction"]})
+                session_id = str(cur.fetchone()["id"])
+
+            profile_id = _apply_manual_assignment(
+                cur, session_id=session_id, door_id=door_id, direction=gate["direction"],
+                event_time_vn=gate["event_time_vn"], room_label=gate["room_label"],
+                unlock_id=unlock_id, profile_id=profile_id, new_name=new_name,
+                new_room=new_room, source=source, user=user,
+            )
+        conn.commit()
+    return {"ok": True, "profile_id": profile_id, "enroll_session_id": session_id}
 
 
 # ── Worker heartbeat status ──────────────────────────────────
@@ -703,7 +963,7 @@ def review_queue(
             total = cur.fetchone()["total"]
 
             cur.execute(f"""
-                SELECT vs.id, vs.job_id, vs.room_label, vs.event_time_vn, vs.status,
+                SELECT vs.id, vs.job_id, vs.door_id, vs.room_label, vs.event_time_vn, vs.status,
                        vs.direction, vs.person_count, vs.persons_enrolled,
                        vs.recognized_person_id, vs.recognition_sim,
                        vs.recognized_name, vs.overall_quality,

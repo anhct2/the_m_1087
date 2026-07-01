@@ -26,7 +26,7 @@ export default function EnrollMerge() {
     try {
       await mergeProfiles({ primary_id: cluster.members[primary].id, merge_ids: mergeIds })
       setConfirm(false)
-      navigate('/enroll')
+      navigate('/enroll/duplicates')
     } finally {
       setMerging(false)
     }
@@ -35,7 +35,7 @@ export default function EnrollMerge() {
   async function doDismiss() {
     const memberIds = cluster.members.slice(1).map(m => m.id)
     await dismissCluster(clusterId, { member_ids: memberIds })
-    navigate('/enroll')
+    navigate('/enroll/duplicates')
   }
 
   if (loading) return <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div>
@@ -43,7 +43,7 @@ export default function EnrollMerge() {
 
   return (
     <div style={{ padding: '20px 24px' }}>
-      <button onClick={() => navigate('/enroll')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', color: 'var(--tlo)', fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
+      <button onClick={() => navigate('/enroll/duplicates')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', color: 'var(--tlo)', fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
         <Icon name="chevLeft" size={14} />Enroll / Trùng lặp / <span style={{ color: 'var(--tmd)' }}>Gộp hồ sơ</span>
       </button>
 
