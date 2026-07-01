@@ -344,7 +344,7 @@ def find_best_profile_match(face_emb: List[float],
                 cur.execute("""
                     SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
                     FROM enroll.person_profiles
-                    WHERE id = ANY(%(pids)s)
+                    WHERE id = ANY(%(pids)s::uuid[])
                       AND face_embedding IS NOT NULL AND is_active = true
                     ORDER BY face_embedding<=>%(emb)s::vector
                     LIMIT 1
