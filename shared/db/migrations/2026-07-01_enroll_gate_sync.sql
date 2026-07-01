@@ -49,13 +49,16 @@ CREATE TABLE IF NOT EXISTS enroll.duplicate_dismissals (
 --    into ONE session before matching. Because gate_session_clips /
 --    gate_sessions_v2 is what worker-mapper and Gate Log both use, joining
 --    against v1 here could show a different user_name/method than what
---    Gate Log shows for the same door_id. Also expose door_id/unlock_id so
---    the API can build Gate Log <-> Enroll deep links.
+--    Gate Log shows for the same door_id.
+--
+--    IMPORTANT: Postgres' CREATE OR REPLACE VIEW forbids renaming/reordering
+--    existing output columns (only appending new ones at the END is
+--    allowed) — hence door_id/unlock_id are appended last here rather than
+--    placed next to job_id, to keep the existing column order/names intact
+--    for any other code still selecting from this view positionally.
 CREATE OR REPLACE VIEW enroll.v_sessions AS
 SELECT es.id,
        es.job_id,
-       es.door_id,
-       es.unlock_id,
        es.room_label,
        es.event_time_vn,
        es.status,
@@ -83,7 +86,9 @@ SELECT es.id,
            JOIN enroll.camera_clip_results ccr2 ON ccr2.enroll_session_id = psm2.enroll_session_id
           WHERE psm2.person_id = pp.id AND ccr2.frigate_event_id IS NOT NULL
           ORDER BY ccr2.stopped_here DESC, ccr2.confidence DESC NULLS LAST
-         LIMIT 1) AS recognized_face_event_id
+         LIMIT 1) AS recognized_face_event_id,
+       es.door_id,
+       es.unlock_id
 FROM enroll.enroll_sessions es
 LEFT JOIN gate_sessions_v2 gs ON gs.door_id::text = es.door_id AND gs.direction = es.direction
 LEFT JOIN enroll.person_profiles pp ON pp.id = es.recognized_person_id;
