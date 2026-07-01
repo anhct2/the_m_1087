@@ -1,5 +1,5 @@
 import { useState, useEffect, memo, useCallback } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { Icon } from './UI'
 
@@ -10,6 +10,15 @@ const NAV = [
   { to: '/room-log',  icon: 'calendar',  label: 'Lịch phòng' },
   { to: '/enroll',    icon: 'users',     label: 'Enroll' },
   { to: '/airbnb',    icon: 'calGrid',   label: 'Lịch Airbnb' },
+]
+
+export const ENROLL_SUBNAV = [
+  { to: '/enroll/sessions',   label: 'Sessions' },
+  { to: '/enroll/review',     label: 'Cần xử lý' },
+  { to: '/enroll/duplicates', label: 'Trùng lặp' },
+  { to: '/enroll/profiles',   label: 'Profiles' },
+  { to: '/enroll/occupancy',  label: 'Occupancy' },
+  { to: '/enroll/jobs',       label: 'Jobs' },
 ]
 
 const Clock = memo(function Clock() {
@@ -30,6 +39,8 @@ const Clock = memo(function Clock() {
 
 export default function AppShell() {
   const { user, logout } = useAuth()
+  const location = useLocation()
+  const inEnroll = location.pathname.startsWith('/enroll')
 
   const navItem = ({ isActive }) => ({
     position: 'relative', display: 'flex', alignItems: 'center', gap: 11,
@@ -56,15 +67,30 @@ export default function AppShell() {
         <div style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--txl)', letterSpacing: '1.5px', padding: '0 10px 8px' }}>ĐIỀU HƯỚNG</div>
         <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {NAV.map(({ to, icon, label }) => (
-            <NavLink key={to} to={to} style={navItem}>
-              {({ isActive }) => (
-                <>
-                  {isActive && <span style={{ position: 'absolute', left: -12, top: 8, bottom: 8, width: 3, borderRadius: '0 3px 3px 0', background: 'var(--in)' }} />}
-                  <Icon name={icon} size={16} />
-                  {label}
-                </>
+            <div key={to}>
+              <NavLink to={to} style={navItem}>
+                {({ isActive }) => (
+                  <>
+                    {isActive && <span style={{ position: 'absolute', left: -12, top: 8, bottom: 8, width: 3, borderRadius: '0 3px 3px 0', background: 'var(--in)' }} />}
+                    <Icon name={icon} size={16} />
+                    {label}
+                  </>
+                )}
+              </NavLink>
+              {to === '/enroll' && inEnroll && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1, margin: '3px 0 4px 27px', borderLeft: '1px solid var(--ln)', paddingLeft: 10 }}>
+                  {ENROLL_SUBNAV.map(s => (
+                    <NavLink key={s.to} to={s.to} style={({ isActive }) => ({
+                      fontSize: 12, padding: '6px 9px', borderRadius: 6, textDecoration: 'none',
+                      color: isActive ? 'oklch(0.85 0.11 152)' : 'var(--tlo)',
+                      background: isActive ? 'var(--inb)' : 'transparent', fontWeight: isActive ? 600 : 400,
+                    })}>
+                      {s.label}
+                    </NavLink>
+                  ))}
+                </div>
               )}
-            </NavLink>
+            </div>
           ))}
         </nav>
 

@@ -1,9 +1,20 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, Link } from 'react-router-dom'
 import { Card, Badge, Icon, SimBar, Avatar, Btn, Spinner } from '../components/UI'
 import { CONF } from './enrollData'
 import { getEnrollProfile, postReenroll } from '../api/client'
 import { fmtTime, fmtShortDate, fmtDate, snapUrl } from '../utils'
+
+// Nhóm clip theo ngày (VN) — mới nhất trước
+function groupClipsByDay(clips) {
+  const groups = {}
+  for (const c of clips) {
+    const d = new Date(c.event_time_vn)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    ;(groups[key] ||= []).push(c)
+  }
+  return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]))
+}
 
 export default function EnrollProfile() {
   const { id } = useParams()
@@ -40,13 +51,15 @@ export default function EnrollProfile() {
     { label: 'Frames đóng góp',    text: `${p.face_frame_count ?? '?'} frames` },
   ]
 
-  const sessions = p.sessions ?? []
-  const stays    = p.stays    ?? []
+  const sessions   = p.sessions ?? []
+  const stays      = p.stays    ?? []
+  const manualLog  = p.manual_assignments ?? []
+  const clipGroups = groupClipsByDay(p.clips ?? [])
 
   return (
     <div style={{ padding: '20px 24px' }}>
-      <button onClick={() => navigate('/enroll')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', color: 'var(--tlo)', fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
-        <Icon name="chevLeft" size={14} />Enroll / <span style={{ color: 'var(--tmd)' }}>{p.display_name}</span>
+      <button onClick={() => navigate('/enroll/profiles')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', color: 'var(--tlo)', fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
+        <Icon name="chevLeft" size={14} />Enroll / Profiles / <span style={{ color: 'var(--tmd)' }}>{p.display_name}</span>
       </button>
 
       {/* Header */}
@@ -108,6 +121,39 @@ export default function EnrollProfile() {
         </Card>
       </div>
 
+      {/* Ảnh/clip liên quan theo ngày */}
+      <Card pad={18} style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Ảnh / clip liên quan theo ngày</div>
+        {clipGroups.length === 0
+          ? <div style={{ fontSize: 12, color: 'var(--tlo)' }}>Chưa có clip nào</div>
+          : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {clipGroups.map(([day, dayClips]) => (
+                <div key={day}>
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)', marginBottom: 8 }}>{fmtDate(dayClips[0].event_time_vn)}</div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    {dayClips.map((c, i) => (
+                      <Link
+                        key={i}
+                        to={`/enroll/sessions/gate/${c.door_id}`}
+                        title={`${c.camera_id} · ${fmtTime(c.event_time_vn)} · xem session`}
+                        style={{ position: 'relative', width: 84, textDecoration: 'none' }}
+                      >
+                        <div style={{ position: 'relative', width: 84, height: 63, borderRadius: 8, overflow: 'hidden', border: `1px solid ${c.stopped_here ? 'var(--in3)' : 'var(--ln)'}` }}>
+                          <img src={snapUrl(c.frigate_event_id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <span style={{ position: 'absolute', top: 4, left: 5, fontFamily: 'var(--mono)', fontSize: 9, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.5)', padding: '1px 4px', borderRadius: 3 }}>{c.camera_id}</span>
+                        </div>
+                        <div style={{ fontSize: 9.5, color: 'var(--txl)', marginTop: 3, textAlign: 'center', fontFamily: 'var(--mono)' }}>{fmtTime(c.event_time_vn)}</div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        }
+      </Card>
+
       {/* Timeline + stays */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 14 }}>
         <Card pad={18}>
@@ -120,14 +166,21 @@ export default function EnrollProfile() {
                   const isGood = t.status === 'enrolled'
                   return (
                     <div key={t.id} style={{ display: 'flex', gap: 12, paddingBottom: 16 }}>
-                      <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, marginTop: 3, background: isGood ? 'var(--in)' : 'var(--am)' }} />
+                      <Avatar gender={p.gender} size={30} src={snapUrl(t.snap_event_id)} style={{ marginTop: 0 }} />
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--tmd)' }}>{fmtShortDate(t.event_time_vn)} {fmtTime(t.event_time_vn)}</span>
                           <Badge kind={isGood ? 'green' : 'amber'}>{t.status}</Badge>
                           {t.overall_quality > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{Math.round(t.overall_quality * 100)}%</span>}
                         </div>
-                        <div style={{ fontSize: 11, color: 'var(--tlo)', marginTop: 4 }}>{t.room_label}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                          <span style={{ fontSize: 11, color: 'var(--tlo)' }}>{t.room_label}</span>
+                          {t.door_id && (
+                            <Link to={`/gate-log?focus=${t.door_id}`} style={{ fontSize: 10.5, color: 'var(--in)', textDecoration: 'none' }}>
+                              Xem ở Gate Log →
+                            </Link>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )
@@ -162,6 +215,22 @@ export default function EnrollProfile() {
           }
         </Card>
       </div>
+
+      {manualLog.length > 0 && (
+        <Card pad={18} style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Lịch sử gán thủ công</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {manualLog.map(m => (
+              <div key={m.id} style={{ fontSize: 12, color: 'var(--tmd)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Badge kind="teal">{m.source === 'gate_log' ? 'Gate Log' : 'Enroll'}</Badge>
+                <span>{m.room_label || '—'}</span>
+                <Link to={`/gate-log?focus=${m.door_id}`} style={{ fontSize: 11, color: 'var(--in)', textDecoration: 'none' }}>door #{m.door_id}</Link>
+                <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>{fmtDate(m.assigned_at)} {fmtTime(m.assigned_at)} · {m.assigned_by}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

@@ -11,6 +11,8 @@ export const STATUS = {
   pending:      ['dim',   '○ pending'],
   running:      ['blue',  '… running'],
   skipped:      ['dim',   '– skipped'],
+  queued:       ['amber', '○ đã đưa vào hàng đợi'],
+  not_queued:   ['dim',   '– chưa xử lý'],
 }
 
 export const CONF = {

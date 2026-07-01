@@ -47,6 +47,9 @@ export const getStatsTrend = (days = 7) =>
 export const getSessions = params =>
   api.get('/api/sessions', { params })
 
+export const getSession = sessionId =>
+  api.get(`/api/sessions/${sessionId}`)
+
 export const getSessionClips = sessionId =>
   api.get(`/api/sessions/${sessionId}/clips`)
 
@@ -55,6 +58,7 @@ export const getUsers = () => api.get('/api/users')
 
 // ── Rooms ───────────────────────────────────────────────────
 export const getRoomStatus  = ()           => api.get('/api/rooms/status')
+export const getRoomCodes   = ()           => api.get('/api/rooms/codes')
 export const getRoomHistory = (room)       => api.get(`/api/rooms/${encodeURIComponent(room)}/history`)
 export const getRoomMonthly = (year, month) => api.get('/api/rooms/monthly', { params: { year, month } })
 export const getRoomDay     = (room, date) => api.get(`/api/rooms/${encodeURIComponent(room)}/day`, { params: { date } })
@@ -85,6 +89,11 @@ export const getDuplicates     = (threshold)  => api.get('/api/enroll/duplicates
 export const getDuplicateCluster = (id)       => api.get(`/api/enroll/duplicates/${id}`)
 export const mergeProfiles     = (body)       => api.post('/api/enroll/profiles/merge', body)
 export const dismissCluster    = (id, body)   => api.post(`/api/enroll/duplicates/${id}/dismiss`, body)
+
+// ── Enroll ⇄ Gate Log unified sessions (1:1, keyed by door_id) ───
+export const getGateSessions    = (params)      => api.get('/api/enroll/gate-sessions', { params })
+export const getGateSessionById = (doorId)      => api.get(`/api/enroll/gate-sessions/${doorId}`)
+export const assignGateSession  = (doorId, body) => api.post(`/api/enroll/gate-sessions/${doorId}/assign`, body)
 
 // ── Airbnb ────────────────────────────────────────────────────────
 export const getAirbnbCalendar      = (days = 30)            => api.get('/api/airbnb/calendar', { params: { days } })

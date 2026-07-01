@@ -87,6 +87,40 @@ def list_sessions(
     return {"total": total, "offset": offset, "limit": limit, "items": items}
 
 
+@router.get("/{session_id}")
+def get_session_by_id(session_id: int, _=Depends(require_auth)):
+    """
+    Một session theo door_id — dùng để deep-link từ Enroll sang Gate Log
+    (door_id == gate_session_clips.session_id == gate_sessions_v2.door_id)
+    mà không phụ thuộc vào trang/filter hiện tại của danh sách Gate Log.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT b.session_id, b.unlock_id,
+                    (b.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh') AS event_time_local,
+                    b.direction, b.user_name, b.label, b.method, b.camera,
+                    b.frigate_event_id, b.frigate_score, b.delta_seconds,
+                    b.clip_finalized, b.codec, b.snapshot_url, b.clip_url, b.match_score,
+                    (SELECT frigate_event_id FROM gate_session_clips x
+                     WHERE x.session_id = b.session_id AND x.direction = b.direction
+                       AND x.camera = 'N1' ORDER BY x.match_score ASC LIMIT 1) AS event_id_n1,
+                    (SELECT frigate_event_id FROM gate_session_clips x
+                     WHERE x.session_id = b.session_id AND x.direction = b.direction
+                       AND x.camera = 'S1' ORDER BY x.match_score ASC LIMIT 1) AS event_id_s1,
+                    (SELECT frigate_event_id FROM gate_session_clips x
+                     WHERE x.session_id = b.session_id AND x.direction = b.direction
+                       AND x.camera = 'S2' ORDER BY x.match_score ASC LIMIT 1) AS event_id_s2
+                FROM gate_session_clips b
+                WHERE b.session_id = %(sid)s AND b.is_best_match = TRUE
+                LIMIT 1
+            """, {"sid": session_id})
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Session not found")
+    return dict(row)
+
+
 @router.post("/{session_id}/clips/{clip_id}/mark-best", status_code=200)
 def mark_best_match(session_id: int, clip_id: int, user: str = Depends(require_auth)):
     """
