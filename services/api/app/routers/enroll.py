@@ -675,6 +675,300 @@ def release_stuck_endpoint(_=Depends(require_auth)):
     return {"jobs_reset": n_jobs, "sessions_reset": n_sessions}
 
 
+# ── Review queue ────────────────────────────────────────────────
+@router.get("/review")
+def review_queue(
+    days:   int = Query(7, ge=1, le=90),
+    limit:  int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    _=Depends(require_auth),
+):
+    """Sessions cần xử lý thủ công: failed hoặc enrolled không nhận diện được."""
+    where = """
+        vs.event_time_vn >= now() - (%(days)s || ' days')::interval
+        AND (
+            vs.status = 'failed'
+            OR (vs.status = 'enrolled' AND vs.recognized_person_id IS NULL)
+        )
+    """
+    params_count = {"days": days}
+    params_list  = {"days": days, "limit": limit, "offset": offset}
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS total FROM enroll.v_sessions vs WHERE {where}",
+                params_count,
+            )
+            total = cur.fetchone()["total"]
+
+            cur.execute(f"""
+                SELECT vs.id, vs.job_id, vs.room_label, vs.event_time_vn, vs.status,
+                       vs.direction, vs.person_count, vs.persons_enrolled,
+                       vs.recognized_person_id, vs.recognition_sim,
+                       vs.recognized_name, vs.overall_quality,
+                       vs.error_msg, vs.warnings,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.camera_clip_results ccr
+                        WHERE ccr.enroll_session_id = vs.id
+                          AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
+                        LIMIT 1) AS snap_event_id
+                FROM enroll.v_sessions vs
+                WHERE {where}
+                ORDER BY vs.event_time_vn DESC
+                LIMIT %(limit)s OFFSET %(offset)s
+            """, params_list)
+            items = cur.fetchall()
+
+    return {"items": [dict(r) for r in items], "total": total}
+
+
+# ── Duplicate clusters ───────────────────────────────────────────
+@router.get("/duplicates")
+def list_duplicates(
+    threshold: float = Query(0.82, ge=0.5, le=0.99),
+    _=Depends(require_auth),
+):
+    """Tìm cặp profile có face_embedding tương tự nhau (potential duplicates)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    a.id           AS id_a,
+                    a.display_name AS name_a,
+                    a.known_room   AS room_a,
+                    a.enroll_count AS cnt_a,
+                    a.face_quality AS qual_a,
+                    a.gender       AS gender_a,
+                    a.age_estimate AS age_a,
+                    b.id           AS id_b,
+                    b.display_name AS name_b,
+                    b.known_room   AS room_b,
+                    b.enroll_count AS cnt_b,
+                    b.face_quality AS qual_b,
+                    b.gender       AS gender_b,
+                    b.age_estimate AS age_b,
+                    (1 - (a.face_embedding <=> b.face_embedding))::double precision AS similarity,
+                    (SELECT ccr.frigate_event_id
+                     FROM enroll.person_session_map psm
+                     JOIN enroll.camera_clip_results ccr
+                       ON ccr.enroll_session_id = psm.enroll_session_id
+                     WHERE psm.person_id = a.id AND ccr.frigate_event_id IS NOT NULL
+                     ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_a,
+                    (SELECT ccr.frigate_event_id
+                     FROM enroll.person_session_map psm
+                     JOIN enroll.camera_clip_results ccr
+                       ON ccr.enroll_session_id = psm.enroll_session_id
+                     WHERE psm.person_id = b.id AND ccr.frigate_event_id IS NOT NULL
+                     ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_b
+                FROM enroll.person_profiles a
+                JOIN enroll.person_profiles b ON b.id > a.id
+                WHERE a.is_active AND b.is_active
+                  AND a.face_embedding IS NOT NULL
+                  AND b.face_embedding IS NOT NULL
+                  AND (1 - (a.face_embedding <=> b.face_embedding)) >= %(thresh)s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM enroll.duplicate_dismissals dd
+                      WHERE dd.profile_id_a = LEAST(a.id, b.id)
+                        AND dd.profile_id_b = GREATEST(a.id, b.id)
+                  )
+                ORDER BY similarity DESC
+                LIMIT 100
+            """, {"thresh": threshold})
+            pairs = cur.fetchall()
+
+    clusters: list = []
+    cluster_map: dict = {}
+
+    for row in [dict(r) for r in pairs]:
+        if row["cnt_a"] >= row["cnt_b"]:
+            p_id, p_name, p_room, p_cnt, p_qual, p_gender, p_age, p_face = (
+                row["id_a"], row["name_a"], row["room_a"], row["cnt_a"],
+                row["qual_a"], row["gender_a"], row["age_a"], row["face_event_a"])
+            s_id, s_name, s_room, s_cnt, s_qual, s_gender, s_age, s_face = (
+                row["id_b"], row["name_b"], row["room_b"], row["cnt_b"],
+                row["qual_b"], row["gender_b"], row["age_b"], row["face_event_b"])
+        else:
+            p_id, p_name, p_room, p_cnt, p_qual, p_gender, p_age, p_face = (
+                row["id_b"], row["name_b"], row["room_b"], row["cnt_b"],
+                row["qual_b"], row["gender_b"], row["age_b"], row["face_event_b"])
+            s_id, s_name, s_room, s_cnt, s_qual, s_gender, s_age, s_face = (
+                row["id_a"], row["name_a"], row["room_a"], row["cnt_a"],
+                row["qual_a"], row["gender_a"], row["age_a"], row["face_event_a"])
+
+        sim = round(float(row["similarity"]), 4)
+        cid = str(p_id)
+
+        def _member(mid, mname, mroom, mcnt, mqual, mgender, mage, mface, msim):
+            return {
+                "id": str(mid), "display_name": mname, "known_room": mroom,
+                "enroll_count": mcnt, "face_quality": mqual,
+                "gender": mgender, "age_estimate": mage,
+                "face_event_id": mface, "similarity": msim,
+            }
+
+        if cid in cluster_map:
+            idx = cluster_map[cid]
+            clusters[idx]["members"].append(
+                _member(s_id, s_name, s_room, s_cnt, s_qual, s_gender, s_age, s_face, sim)
+            )
+            clusters[idx]["max_similarity"] = max(clusters[idx]["max_similarity"], sim)
+        else:
+            cluster_map[cid] = len(clusters)
+            clusters.append({
+                "cluster_id": cid,
+                "max_similarity": sim,
+                "members": [
+                    _member(p_id, p_name, p_room, p_cnt, p_qual, p_gender, p_age, p_face, 1.0),
+                    _member(s_id, s_name, s_room, s_cnt, s_qual, s_gender, s_age, s_face, sim),
+                ],
+            })
+
+    return clusters
+
+
+@router.get("/duplicates/{cluster_id}")
+def get_duplicate_cluster(
+    cluster_id: str,
+    threshold:  float = Query(0.82, ge=0.5, le=0.99),
+    _=Depends(require_auth),
+):
+    """Chi tiết một cluster: primary profile + tất cả profiles tương tự."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, display_name, known_room, confidence_lvl,
+                       face_quality, gender, age_estimate, enroll_count,
+                       first_seen_ts, last_seen_ts,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.person_session_map psm
+                        JOIN enroll.camera_clip_results ccr
+                          ON ccr.enroll_session_id = psm.enroll_session_id
+                        WHERE psm.person_id = pp.id AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_id
+                FROM enroll.person_profiles pp
+                WHERE id = %(cid)s AND is_active
+            """, {"cid": cluster_id})
+            primary = cur.fetchone()
+            if not primary:
+                raise HTTPException(404, "Profile not found")
+
+            cur.execute("""
+                SELECT b.id, b.display_name, b.known_room, b.confidence_lvl,
+                       b.face_quality, b.gender, b.age_estimate, b.enroll_count,
+                       b.first_seen_ts, b.last_seen_ts,
+                       (1 - (a.face_embedding <=> b.face_embedding))::double precision AS similarity,
+                       (SELECT ccr.frigate_event_id
+                        FROM enroll.person_session_map psm
+                        JOIN enroll.camera_clip_results ccr
+                          ON ccr.enroll_session_id = psm.enroll_session_id
+                        WHERE psm.person_id = b.id AND ccr.frigate_event_id IS NOT NULL
+                        ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_id
+                FROM enroll.person_profiles a
+                JOIN enroll.person_profiles b ON b.id != a.id
+                WHERE a.id = %(cid)s
+                  AND a.is_active AND b.is_active
+                  AND a.face_embedding IS NOT NULL
+                  AND b.face_embedding IS NOT NULL
+                  AND (1 - (a.face_embedding <=> b.face_embedding)) >= %(thresh)s
+                ORDER BY similarity DESC
+            """, {"cid": cluster_id, "thresh": threshold})
+            similars = cur.fetchall()
+
+    p = dict(primary)
+    p["similarity"] = 1.0
+
+    return {"cluster_id": cluster_id, "members": [p] + [dict(s) for s in similars]}
+
+
+@router.post("/profiles/merge")
+def merge_profiles(body: dict, _=Depends(require_auth)):
+    """
+    Gộp nhiều profiles vào một (primary).
+    Body: { "primary_id": uuid, "merge_ids": [uuid, ...] }
+    """
+    primary_id = (body.get("primary_id") or "").strip()
+    merge_ids  = [str(m).strip() for m in (body.get("merge_ids") or []) if str(m).strip()]
+    if not primary_id or not merge_ids:
+        raise HTTPException(400, "primary_id và merge_ids là bắt buộc")
+
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM enroll.person_profiles WHERE id = %(pid)s AND is_active",
+                {"pid": primary_id},
+            )
+            if not cur.fetchone():
+                raise HTTPException(404, "Primary profile not found")
+
+            for mid in merge_ids:
+                cur.execute("""
+                    INSERT INTO enroll.person_session_map
+                        (person_id, enroll_session_id, is_new, merge_sim)
+                    SELECT %(primary)s, enroll_session_id, is_new, merge_sim
+                    FROM enroll.person_session_map
+                    WHERE person_id = %(mid)s
+                    ON CONFLICT (person_id, enroll_session_id) DO NOTHING
+                """, {"primary": primary_id, "mid": mid})
+
+                cur.execute(
+                    "DELETE FROM enroll.person_session_map WHERE person_id = %(mid)s",
+                    {"mid": mid},
+                )
+                cur.execute(
+                    "UPDATE enroll.room_stays SET person_id = %(primary)s WHERE person_id = %(mid)s",
+                    {"primary": primary_id, "mid": mid},
+                )
+                cur.execute("""
+                    UPDATE enroll.enroll_sessions
+                    SET recognized_person_id = %(primary)s
+                    WHERE recognized_person_id = %(mid)s
+                """, {"primary": primary_id, "mid": mid})
+                cur.execute(
+                    "UPDATE enroll.person_profiles SET is_active = false, updated_at = now() WHERE id = %(mid)s",
+                    {"mid": mid},
+                )
+
+            cur.execute("""
+                UPDATE enroll.person_profiles
+                SET enroll_count = (
+                    SELECT COUNT(*) FROM enroll.person_session_map WHERE person_id = %(pid)s
+                ), updated_at = now()
+                WHERE id = %(pid)s
+            """, {"pid": primary_id})
+        conn.commit()
+
+    return {"ok": True, "primary_id": primary_id, "merged": len(merge_ids)}
+
+
+@router.post("/duplicates/{cluster_id}/dismiss")
+def dismiss_duplicate(cluster_id: str, body: dict, _=Depends(require_auth)):
+    """
+    Đánh dấu cluster không phải trùng lặp — sẽ không hiện lại trong danh sách.
+    Body: { "member_ids": [uuid, ...] }
+    """
+    member_ids = [str(m).strip() for m in (body.get("member_ids") or []) if str(m).strip()]
+    if not member_ids:
+        raise HTTPException(400, "member_ids là bắt buộc")
+
+    with get_conn() as conn:
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            for mid in member_ids:
+                id_a = str(min(cluster_id, mid))
+                id_b = str(max(cluster_id, mid))
+                cur.execute("""
+                    INSERT INTO enroll.duplicate_dismissals (profile_id_a, profile_id_b)
+                    VALUES (%(a)s::uuid, %(b)s::uuid)
+                    ON CONFLICT (profile_id_a, profile_id_b) DO NOTHING
+                """, {"a": id_a, "b": id_b})
+        conn.commit()
+
+    return {"ok": True, "dismissed_pairs": len(member_ids)}
+
+
 # ── Re-enroll: reset job để worker f87 xử lý lại ────────────────
 @router.post("/profiles/{person_id}/re-enroll")
 def re_enroll_profile(person_id: str, _=Depends(require_auth)):

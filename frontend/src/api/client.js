@@ -80,6 +80,11 @@ export const getWorkerStatus   = ()           => api.get('/api/enroll/worker-sta
 export const assignSession     = (id, body)   => api.post(`/api/enroll/sessions/${id}/assign`, body)
 export const searchProfiles    = (q)          => api.get('/api/enroll/profiles/search', { params: { q } })
 export const getEnrollByUnlock = (unlockId)   => api.get(`/api/enroll/sessions/by-unlock/${unlockId}`)
+export const getEnrollReview   = (params)     => api.get('/api/enroll/review', { params })
+export const getDuplicates     = (threshold)  => api.get('/api/enroll/duplicates', threshold ? { params: { threshold } } : {})
+export const getDuplicateCluster = (id)       => api.get(`/api/enroll/duplicates/${id}`)
+export const mergeProfiles     = (body)       => api.post('/api/enroll/profiles/merge', body)
+export const dismissCluster    = (id, body)   => api.post(`/api/enroll/duplicates/${id}/dismiss`, body)
 
 // ── Airbnb ────────────────────────────────────────────────────────
 export const getAirbnbCalendar      = (days = 30)            => api.get('/api/airbnb/calendar', { params: { days } })

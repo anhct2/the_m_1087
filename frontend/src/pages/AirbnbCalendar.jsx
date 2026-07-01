@@ -1,342 +1,104 @@
 import { useState, useEffect } from 'react'
-import { getAirbnbCalendarMonth, getAirbnbCalendarRange } from '../api/client'
-import { Icon, Spinner } from '../components/UI'
-import s from './AirbnbCalendar.module.css'
+import { Card, Icon, Spinner } from '../components/UI'
+import { getAirbnbCalendarMonth } from '../api/client'
 
-const VN_TZ        = 'Asia/Ho_Chi_Minh'
-const DOW_VN       = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
-const MON_VN       = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6',
-                      'Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12']
-const WINDOW_DAYS  = 38  // today-7 → today+30
-const WINDOW_STEP  = 7
+const FREE = 'oklch(0.72 0.14 152)', BUSY = 'oklch(0.62 0.16 25)', NONE = 'oklch(0.34 0.01 255)'
+const DOW = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+const MONTH_VN = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12']
+const LEGEND = [['Rỗi', FREE], ['Bận', BUSY], ['Chưa có', NONE]]
 
-function todayStr() {
-  return new Date().toLocaleDateString('sv-SE', { timeZone: VN_TZ })
-}
-
-function addDays(dateStr, n) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  const dt = new Date(y, m - 1, d + n)
-  return [
-    dt.getFullYear(),
-    String(dt.getMonth() + 1).padStart(2, '0'),
-    String(dt.getDate()).padStart(2, '0'),
-  ].join('-')
-}
-
-function fmtShort(dateStr) {
-  const [, m, d] = dateStr.split('-')
-  return `${d}/${m}`
-}
-
-function fmtDay(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  const dt  = new Date(y, m - 1, d)
-  const dow = DOW_VN[dt.getDay()]
-  const dd  = String(d).padStart(2, '0')
-  const mm  = String(m).padStart(2, '0')
-  return { dow, dmy: `${dd}/${mm}` }
-}
-
-function isWeekend(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  const day = new Date(y, m - 1, d).getDay()
-  return day === 0 || day === 6
-}
-
-// ── Timeline: header cell ──────────────────────────────────────────
-function DateHead({ dateStr, today }) {
-  const { dow, dmy } = fmtDay(dateStr)
-  const weekend      = isWeekend(dateStr)
-  return (
-    <div className={`${s.dateHead} ${today ? s.dateHeadToday : ''} ${weekend ? s.dateHeadWknd : ''}`}>
-      <span className={s.dateDow}>{dow}</span>
-      <span className={s.dateDmy}>{dmy}</span>
-    </div>
-  )
-}
-
-// ── Timeline: calendar cell ────────────────────────────────────────
-function Cell({ val, dateStr, today, label }) {
-  const weekend = isWeekend(dateStr)
-  let cls = s.cellNone
-  if (val === true)  cls = s.cellFree
-  if (val === false) cls = s.cellBusy
-  const title = `${label} · ${dateStr} · ${val === true ? 'Rỗi' : val === false ? 'Bận' : 'Chưa có dữ liệu'}`
-  return (
-    <div className={`${s.cell} ${today ? s.cellToday : ''} ${weekend ? s.cellWknd : ''}`} title={title}>
-      <div className={`${s.cellDot} ${cls}`} />
-    </div>
-  )
-}
-
-// ── Timeline view ──────────────────────────────────────────────────
-function TimelineView({ data, today }) {
-  return (
-    <div className={s.scrollArea}>
-      <div className={s.grid}>
-        <div className={s.headerRow}>
-          <div className={s.labelHead}>Phòng</div>
-          {data.dates.map(d => (
-            <DateHead key={d} dateStr={d} today={d === today} />
-          ))}
-          <div className={s.summaryHead}>Rỗi</div>
-        </div>
-
-        {data.rooms.map(room => (
-          <div key={room.id} className={`${s.roomRow} ${!room.confirmed ? s.roomRowUnconfirmed : ''}`}>
-            <div className={s.labelCell}>
-              {room.confirmed ? (
-                <span className={s.roomName}>{room.label}</span>
-              ) : (
-                <span className={s.listingId} title={`Airbnb ID: ${room.listing_id}`}>
-                  <span className={s.unconfTag}>?</span>
-                  {room.listing_id?.slice(-8)}
-                </span>
-              )}
-            </div>
-            {data.dates.map(d => (
-              <Cell
-                key={d}
-                val={room.calendar[d]}
-                dateStr={d}
-                today={d === today}
-                label={room.label}
-              />
-            ))}
-            <div className={s.summaryCell}>
-              <span className={room.free_days > 0 ? s.freeDaysHi : s.freeDays}>
-                {room.free_days}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ── Monthly view ───────────────────────────────────────────────────
-function MonthView({ data, viewYear, viewMonth, today }) {
-  const rooms      = data.rooms
-  const firstDow   = new Date(viewYear, viewMonth - 1, 1).getDay()
-  const daysInMon  = new Date(viewYear, viewMonth, 0).getDate()
-
-  // Build cells: null = empty padding, string = date
-  const cells = []
-  for (let i = 0; i < firstDow; i++) cells.push(null)
-  for (let d = 1; d <= daysInMon; d++) {
-    cells.push(
-      `${viewYear}-${String(viewMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`
-    )
-  }
-  while (cells.length % 7 !== 0) cells.push(null)
-
-  return (
-    <div className={s.monthView}>
-      {/* DOW headers */}
-      <div className={s.dowRow}>
-        {DOW_VN.map((d, i) => (
-          <div key={d} className={`${s.dowHead} ${i === 0 || i === 6 ? s.dowWknd : ''}`}>{d}</div>
-        ))}
-      </div>
-
-      {/* Day grid */}
-      <div className={s.monthGrid}>
-        {cells.map((dateStr, i) => {
-          if (!dateStr) return <div key={i} className={`${s.dayCell} ${s.dayCellEmpty}`} />
-          const isPast   = dateStr < today
-          const isToday  = dateStr === today
-          const wknd     = isWeekend(dateStr)
-          const [,, dd]  = dateStr.split('-')
-          const dayNum   = parseInt(dd)
-
-          return (
-            <div
-              key={dateStr}
-              className={[
-                s.dayCell,
-                isToday  ? s.dayCellToday : '',
-                isPast   ? s.dayCellPast  : '',
-                wknd     ? s.dayCellWknd  : '',
-              ].join(' ')}
-            >
-              <span className={`${s.dayNum} ${isToday ? s.dayNumToday : ''}`}>
-                {dayNum}
-              </span>
-              <div className={s.mDotRow}>
-                {rooms.map(room => {
-                  const val = room.calendar[dateStr]
-                  const cls = val === true  ? s.mDotFree
-                            : val === false ? s.mDotBusy
-                            :                s.mDotNone
-                  return (
-                    <span
-                      key={room.id}
-                      className={`${s.mDot} ${cls}`}
-                      title={`${room.label}: ${val === true ? 'Rỗi' : val === false ? 'Bận' : 'Chưa có'}`}
-                    />
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Room legend */}
-      {rooms.length > 0 && (
-        <div className={s.roomLegend}>
-          {rooms.map(room => (
-            <span key={room.id} className={s.roomLegendItem}>
-              <span className={`${s.mDot} ${s.mDotFree}`} />
-              <span className={s.roomLegendName}>{room.label}</span>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Main page ──────────────────────────────────────────────────────
 export default function AirbnbCalendar() {
-  const nowVN       = new Date(new Date().toLocaleString('en-US', { timeZone: VN_TZ }))
-  const [viewMode,    setViewMode]    = useState('month')
-  const [viewYear,    setViewYear]    = useState(nowVN.getFullYear())
-  const [viewMonth,   setViewMonth]   = useState(nowVN.getMonth() + 1)
-  const [winStart,    setWinStart]    = useState(() => addDays(todayStr(), -7))
-  const [data,        setData]        = useState(null)
-  const [loading,     setLoading]     = useState(true)
-  const [err,         setErr]         = useState(null)
-  const today = todayStr()
+  const today = new Date()
+  const [year, setYear]   = useState(today.getFullYear())
+  const [month, setMonth] = useState(today.getMonth() + 1)
+  const [data, setData]   = useState(null)
+  const [loading, setLoading] = useState(true)
 
-  const load = async () => {
-    setLoading(true); setErr(null)
-    try {
-      const { data: d } = viewMode === 'month'
-        ? await getAirbnbCalendarMonth(viewYear, viewMonth)
-        : await getAirbnbCalendarRange(winStart, WINDOW_DAYS)
-      setData(d)
-    } catch {
-      setErr('Không tải được lịch Airbnb. Kiểm tra kết nối hoặc dữ liệu chưa được scrape.')
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    setLoading(true)
+    getAirbnbCalendarMonth(year, month)
+      .then(r => setData(r.data))
+      .finally(() => setLoading(false))
+  }, [year, month])
+
+  function prevMonth() {
+    if (month === 1) { setYear(y => y - 1); setMonth(12) }
+    else setMonth(m => m - 1)
+  }
+  function nextMonth() {
+    if (month === 12) { setYear(y => y + 1); setMonth(1) }
+    else setMonth(m => m + 1)
   }
 
-  useEffect(() => { load() }, [viewMode, viewYear, viewMonth, winStart])  // eslint-disable-line
+  const rooms   = data?.rooms ?? []
+  const dates   = data?.dates ?? []
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`
 
-  const prevMonth = () => {
-    if (viewMonth === 1) { setViewYear(y => y - 1); setViewMonth(12) }
-    else setViewMonth(m => m - 1)
-  }
-  const nextMonth = () => {
-    if (viewMonth === 12) { setViewYear(y => y + 1); setViewMonth(1) }
-    else setViewMonth(m => m + 1)
-  }
-
-  const prevWindow = () => setWinStart(s => addDays(s, -WINDOW_STEP))
-  const nextWindow = () => setWinStart(s => addDays(s, +WINDOW_STEP))
-  const resetWindow = () => setWinStart(addDays(today, -7))
-
-  const confirmedCount   = data?.rooms.filter(r => r.confirmed).length ?? 0
-  const unconfirmedCount = (data?.rooms.length ?? 0) - confirmedCount
+  // Build calendar cells: empty slots + day slots
+  const firstDow = dates.length ? new Date(dates[0]).getDay() : 0
+  const cells = []
+  for (let i = 0; i < firstDow; i++) cells.push({ empty: true, key: `e${i}` })
+  dates.forEach(iso => {
+    const d   = new Date(iso)
+    const wk  = d.getDay()
+    const wknd = wk === 0 || wk === 6
+    // Each room: true=free, false=busy, undefined=none
+    const dots = rooms.map(r => {
+      const val = r.calendar[iso]
+      if (val === true)  return FREE
+      if (val === false) return BUSY
+      return NONE
+    })
+    cells.push({ empty: false, key: iso, day: d.getDate(), isToday: iso === todayIso, wknd, dots })
+  })
 
   return (
-    <div className={s.page}>
-
-      {/* Header */}
-      <div className={s.pageHead}>
+    <div style={{ padding: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <h2 className={s.pageTitle}>Lịch Airbnb</h2>
-          {data && (
-            <span className={s.pageSub}>
-              {data.rooms.length} listing
-              {unconfirmedCount > 0 && (
-                <span className={s.unverifiedNote}>&nbsp;·&nbsp;{unconfirmedCount} chưa xác nhận phòng</span>
-              )}
-            </span>
-          )}
+          <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.3px', margin: 0 }}>Lịch Airbnb</h1>
+          <div style={{ fontSize: 12.5, color: 'var(--tlo)', marginTop: 4 }}>
+            {loading ? 'Đang tải…' : `${rooms.length} listing · tình trạng phòng theo ngày`}
+          </div>
         </div>
-
-        <div className={s.pageActions}>
-          {/* Month navigation */}
-          {viewMode === 'month' && (
-            <div className={s.monthNav}>
-              <button className={s.navBtn} onClick={prevMonth} title="Tháng trước">
-                <Icon name="chevLeft" size={13} />
-              </button>
-              <span className={s.monthLabel}>{MON_VN[viewMonth - 1]} {viewYear}</span>
-              <button className={s.navBtn} onClick={nextMonth} title="Tháng sau">
-                <Icon name="chevron" size={13} />
-              </button>
-            </div>
-          )}
-
-          {/* Timeline window navigation */}
-          {viewMode === 'timeline' && (
-            <div className={s.monthNav}>
-              <button className={s.navBtn} onClick={prevWindow} title="Lùi 7 ngày">
-                <Icon name="chevLeft" size={13} />
-              </button>
-              <button
-                className={s.winLabel}
-                onClick={resetWindow}
-                title="Về hôm nay"
-              >
-                {fmtShort(winStart)} → {fmtShort(addDays(winStart, WINDOW_DAYS - 1))}
-              </button>
-              <button className={s.navBtn} onClick={nextWindow} title="Tiến 7 ngày">
-                <Icon name="chevron" size={13} />
-              </button>
-            </div>
-          )}
-
-          {/* Legend */}
-          <div className={s.legend}>
-            <span className={s.legendItem}><span className={s.dotFree}/>Rỗi</span>
-            <span className={s.legendItem}><span className={s.dotBusy}/>Bận</span>
-            <span className={s.legendItem}><span className={s.dotNone}/>Chưa có</span>
-          </div>
-
-          {/* View toggle */}
-          <div className={s.viewToggle}>
-            <button
-              className={`${s.viewBtn} ${viewMode === 'month' ? s.viewBtnActive : ''}`}
-              onClick={() => setViewMode('month')}
-            >
-              Tháng
-            </button>
-            <button
-              className={`${s.viewBtn} ${viewMode === 'timeline' ? s.viewBtnActive : ''}`}
-              onClick={() => { resetWindow(); setViewMode('timeline') }}
-            >
-              Dòng thời gian
-            </button>
-          </div>
-
-          <button className={s.btnRefresh} onClick={load} title="Làm mới">
-            <Icon name="refresh" size={13}/>
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 9, padding: 4 }}>
+          <span onClick={prevMonth} style={{ width: 30, height: 30, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tmd)', cursor: 'pointer' }}><Icon name="chevLeft" size={14} /></span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600, minWidth: 130, textAlign: 'center' }}>{MONTH_VN[month - 1]} · {year}</span>
+          <span onClick={nextMonth} style={{ width: 30, height: 30, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tmd)', cursor: 'pointer' }}><Icon name="chevron" size={14} /></span>
         </div>
       </div>
 
-      {/* Body */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+        {LEGEND.map(([l, c]) => (
+          <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--tlo)' }}><span style={{ width: 9, height: 9, borderRadius: 2, background: c }} />{l}</span>
+        ))}
+        {rooms.length > 0 && (
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--txl)' }}>
+            Mỗi ô hiển thị {rooms.length} chấm: {rooms.map(r => r.label).join(' · ')}
+          </span>
+        )}
+      </div>
+
       {loading ? (
-        <div className={s.center}>
-          <Spinner size={22} />
-          <span className={s.loadMsg}>Đang tải lịch Airbnb...</span>
-        </div>
-      ) : err || !data ? (
-        <div className={s.center}>
-          <span className={s.errMsg}>{err}</span>
-          <button className={s.retryBtn} onClick={load}>Thử lại</button>
-        </div>
-      ) : viewMode === 'month' ? (
-        <MonthView data={data} viewYear={viewYear} viewMonth={viewMonth} today={today} />
+        <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div>
+      ) : rooms.length === 0 ? (
+        <Card pad={18}><div style={{ padding: 24, textAlign: 'center', fontSize: 12, color: 'var(--tlo)' }}>Không có Airbnb listing nào được cấu hình.</div></Card>
       ) : (
-        <TimelineView data={data} today={today} />
+        <Card pad={18}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 8 }}>
+            {DOW.map((d, i) => (
+              <div key={d} style={{ textAlign: 'center', fontFamily: 'var(--mono)', fontSize: 10.5, letterSpacing: '1px', paddingBottom: 6, color: (i === 0 || i === 6) ? 'oklch(0.5 0.06 25)' : 'var(--txl)' }}>{d}</div>
+            ))}
+            {cells.map(c => c.empty ? <div key={c.key} /> : (
+              <div key={c.key} style={{ borderRadius: 8, padding: '7px 8px', minHeight: 62, display: 'flex', flexDirection: 'column', gap: 6, border: `1px solid ${c.isToday ? 'var(--in3)' : 'var(--ln)'}`, background: c.isToday ? 'oklch(0.78 0.15 152 / 0.08)' : c.wknd ? 'oklch(0.17 0.007 255)' : 'var(--bg1)' }}>
+                <span style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600, color: c.isToday ? 'oklch(0.85 0.11 152)' : c.wknd ? 'oklch(0.55 0.06 25)' : 'var(--tmd)' }}>{c.day}</span>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {c.dots.map((col, i) => <span key={i} style={{ width: 7, height: 7, borderRadius: 2, background: col }} />)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
       )}
     </div>
   )

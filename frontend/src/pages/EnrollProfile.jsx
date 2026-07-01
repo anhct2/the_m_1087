@@ -1,443 +1,166 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { getEnrollProfile, patchEnrollProfile, postReenroll } from '../api/client'
-import { Icon, Spinner, Lightbox } from '../components/UI'
-import s from './EnrollProfile.module.css'
-
-const VN_TZ = 'Asia/Ho_Chi_Minh'
-
-function fmtDt(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-    timeZone: VN_TZ,
-  })
-}
-function fmtTime(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString('vi-VN', {
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false, timeZone: VN_TZ,
-  })
-}
-function fmtDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric', timeZone: VN_TZ,
-  })
-}
-function fmtHr(v) {
-  if (v == null) return '—'
-  const h = parseFloat(v)
-  if (h < 1) return `${Math.round(h * 60)}m`
-  return `${h.toFixed(1)}h`
-}
-function fmtPct(v) {
-  return v != null ? `${Math.round(v * 100)}%` : '—'
-}
-
-const CONF_LABEL = {
-  gate_code:       'gate code',
-  camera_chain:    'camera chain',
-  appearance_only: 'appearance only',
-  unknown:         'unknown',
-}
-const CONF_COLOR = {
-  gate_code: '#22c55e', camera_chain: '#0d9488', appearance_only: '#f59e0b', unknown: '#475569',
-}
-
-function FaceAvatar({ gender, confidence, eventId, size = 52 }) {
-  const [imgErr, setImgErr] = useState(false)
-  const [lbOpen, setLbOpen] = useState(false)
-  const bc  = CONF_COLOR[confidence] || '#475569'
-  const bg  = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
-  const src = eventId && !imgErr ? `/api/media/snapshot/${eventId}` : null
-  return (
-    <div style={{
-      width: size, height: size, borderRadius: '50%', flexShrink: 0,
-      position: 'relative', overflow: 'hidden',
-      background: `radial-gradient(circle at 50% 62%, ${bg} 0%, #050810 100%)`,
-      border: `2px solid ${bc}55`,
-      boxShadow: `0 0 0 2px ${bc}1a, 0 2px 8px rgba(0,0,0,.6)`,
-      cursor: src ? 'zoom-in' : undefined,
-    }}
-      onClick={src ? () => setLbOpen(true) : undefined}
-    >
-      {src
-        ? <img src={src} alt="" onError={() => setImgErr(true)}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%',
-                     objectFit: 'cover', objectPosition: 'top center', borderRadius: '50%' }} />
-        : <svg style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', opacity: .35 }}
-            width={size} height={size * 1.15} viewBox="0 0 100 115">
-            <ellipse cx={50} cy={34} rx={21} ry={25} fill="#c8bdb0" />
-            <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
-          </svg>
-      }
-      {lbOpen && src && <Lightbox src={src} onClose={() => setLbOpen(false)} />}
-    </div>
-  )
-}
-const STATUS_MOD = {
-  enrolled:     s.tagGreen,
-  low_quality:  s.tagAmber,
-  no_detection: s.tagDim,
-  failed:       s.tagRed,
-}
-
-function Tag({ text, mod }) {
-  return <span className={`${s.tag} ${mod || s.tagDim}`}>{text}</span>
-}
-
-function ScoreBar({ value, warn = 0.45, ok = 0.70 }) {
-  const v   = value ?? 0
-  const pct = Math.min(100, Math.round(v * 100))
-  const cls = v >= ok ? s.barGreen : v >= warn ? s.barAmber : s.barRed
-  return (
-    <div className={s.barRow}>
-      <div className={s.barTrack}>
-        <div className={`${s.barFill} ${cls}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className={s.barVal}>{v.toFixed(2)}</span>
-    </div>
-  )
-}
+import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { Card, Badge, Icon, SimBar, Avatar, Btn, Spinner } from '../components/UI'
+import { CONF } from './enrollData'
+import { getEnrollProfile, postReenroll } from '../api/client'
+import { fmtTime, fmtShortDate, fmtDate, snapUrl } from '../utils'
 
 export default function EnrollProfile() {
-  const { id }       = useParams()
-  const navigate     = useNavigate()
-  const [data, setData]         = useState(null)
-  const [loading, setLoading]   = useState(true)
-  const [err, setErr]           = useState(null)
-  const [editing, setEditing]   = useState(false)
-  const [nameVal, setNameVal]   = useState('')
-  const [saving, setSaving]     = useState(false)
-  const [reenrolling, setRE]    = useState(false)
-  const [reenrollResult, setRER] = useState(null)
-  const inputRef = useRef(null)
-
-  const load = useCallback(async () => {
-    setLoading(true); setErr(null)
-    try {
-      const { data: d } = await getEnrollProfile(id)
-      setData(d)
-      setNameVal(d.display_name || '')
-    } catch (e) {
-      setErr('Không tải được profile')
-    } finally {
-      setLoading(false)
-    }
-  }, [id])
-
-  useEffect(() => { load() }, [load])
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const [p, setP]         = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [reenrolling, setReenrolling] = useState(false)
 
   useEffect(() => {
-    if (editing && inputRef.current) inputRef.current.focus()
-  }, [editing])
+    setLoading(true)
+    getEnrollProfile(id)
+      .then(r => setP(r.data))
+      .finally(() => setLoading(false))
+  }, [id])
 
-  const saveName = async () => {
-    if (!nameVal.trim()) return
-    setSaving(true)
-    try {
-      await patchEnrollProfile(id, { display_name: nameVal.trim() })
-      setData(d => ({ ...d, display_name: nameVal.trim() }))
-      setEditing(false)
-    } finally { setSaving(false) }
-  }
+  if (loading) return <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div>
+  if (!p)      return <div style={{ padding: 40, textAlign: 'center', color: 'var(--txl)' }}>Không tìm thấy hồ sơ</div>
 
-  const handleReenroll = async () => {
-    if (reenrolling) return
-    setRE(true); setRER(null)
-    try {
-      const { data: r } = await postReenroll(id)
-      setRER(r)
-    } catch {
-      setRER({ error: 'Thất bại — kiểm tra worker-enroll trên f87' })
-    } finally { setRE(false) }
-  }
+  const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', p.confidence_lvl ?? 'unknown']
+  const thumbSrc = snapUrl(p.face_event_id)
 
-  if (loading) return (
-    <div className={s.center}><Spinner size={20} /><span className={s.tlo}>Đang tải...</span></div>
-  )
-  if (err || !data) return (
-    <div className={s.center}>
-      <span className={s.tlo}>{err || 'Không tìm thấy profile'}</span>
-      <button className={s.btn} onClick={() => navigate('/enroll')}>← Quay lại</button>
-    </div>
-  )
+  const metrics = [
+    { label: 'Face quality',  value: p.face_quality?.toFixed(2) ?? '—', hi: 'var(--in)' },
+    { label: 'Face source',   value: p.face_source_cam || '—' },
+    { label: 'Face frames',   value: String(p.face_frame_count ?? '—') },
+    { label: 'Enroll count',  value: `${p.enroll_count ?? 0}×` },
+    { label: 'Body ratio',    value: p.body_ratio?.toFixed(2) ?? '—' },
+  ]
 
-  const p = data
-  const displayName = p.display_name || `Unknown · ${p.id?.slice(0, 8)}`
+  const faceRows = [
+    { label: 'Face quality (avg)', bar: p.face_quality },
+    { label: 'Confidence lvl',     text: p.confidence_lvl || '—' },
+    { label: 'Source cam',         text: p.face_source_cam || '—' },
+    { label: 'Frames đóng góp',    text: `${p.face_frame_count ?? '?'} frames` },
+  ]
+
+  const sessions = p.sessions ?? []
+  const stays    = p.stays    ?? []
 
   return (
-    <div className={s.page}>
+    <div style={{ padding: '20px 24px' }}>
+      <button onClick={() => navigate('/enroll')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', color: 'var(--tlo)', fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
+        <Icon name="chevLeft" size={14} />Enroll / <span style={{ color: 'var(--tmd)' }}>{p.display_name}</span>
+      </button>
 
-      <div className={s.topbar}>
-        <button className={s.back} onClick={() => navigate('/enroll')}>
-          <Icon name="chevron-left" size={14} />
-          Enroll
-        </button>
-        <span className={s.breadcrumb}>/</span>
-        <span className={s.breadcrumbCurrent}>{displayName}</span>
-        <div className={s.topActions}>
-          <button className={s.btn} onClick={load}>
-            <Icon name="refresh" size={13} />
-          </button>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 18, background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 12, padding: 20, marginBottom: 14 }}>
+        <Avatar gender={p.gender} size={60} src={thumbSrc} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.3px' }}>{p.display_name}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            <Badge kind={ck}>{cl}</Badge>
+            <Badge kind="teal">{p.known_room || '—'}</Badge>
+            <Badge kind="dim">{p.gender === 'male' ? 'Nam' : p.gender === 'female' ? 'Nữ' : '—'}</Badge>
+            {p.age_estimate && <Badge kind="dim">~{p.age_estimate}t</Badge>}
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>#{p.id}</span>
+          </div>
         </div>
+        <Btn
+          variant="ghost"
+          onClick={() => { setReenrolling(true); postReenroll(p.id).finally(() => setReenrolling(false)) }}
+          disabled={reenrolling}
+        >
+          <Icon name="refresh" size={13} />{reenrolling ? 'Đang xử lý…' : 'Re-enroll'}
+        </Btn>
       </div>
 
-      <div className={s.body}>
-
-        <div className={s.headerCard}>
-          <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={52} />
-
-          <div className={s.headerInfo}>
-            {editing ? (
-              <div className={s.editRow}>
-                <input
-                  ref={inputRef}
-                  className={s.nameInput}
-                  value={nameVal}
-                  onChange={e => setNameVal(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') saveName()
-                    if (e.key === 'Escape') { setEditing(false); setNameVal(p.display_name || '') }
-                  }}
-                  placeholder="Nhập tên khách..."
-                />
-                <button className={`${s.btn} ${s.btnGreen}`} onClick={saveName} disabled={saving}>
-                  {saving ? <Spinner size={12} /> : <Icon name="check" size={13} />}
-                </button>
-                <button className={s.btn} onClick={() => { setEditing(false); setNameVal(p.display_name || '') }}>
-                  <Icon name="x" size={13} />
-                </button>
-              </div>
-            ) : (
-              <div className={s.nameRow}>
-                <span className={s.name}>{displayName}</span>
-                <button className={s.iconBtn} onClick={() => setEditing(true)} title="Đặt tên">
-                  <Icon name="edit" size={13} />
-                </button>
-              </div>
-            )}
-
-            <div className={s.headerMeta}>
-              <Tag text={CONF_LABEL[p.confidence_lvl] || p.confidence_lvl}
-                   mod={p.confidence_lvl === 'gate_code' ? s.tagGreen : s.tagAmber} />
-              {p.known_room && <Tag text={p.known_room} mod={s.tagBlue} />}
-              {p.gender && <Tag text={p.gender === 'female' ? 'Nữ' : 'Nam'} mod={s.tagDim} />}
-              {p.age_estimate && <Tag text={`~${p.age_estimate}t`} mod={s.tagDim} />}
-              <span className={s.metaId}>#{p.id?.slice(0, 8)}</span>
-            </div>
-
-            <div className={s.headerDates}>
-              <span>Lần đầu: {fmtDt(p.first_seen_ts)}</span>
-              <span className={s.sep}>·</span>
-              <span>Lần cuối: {fmtDt(p.last_seen_ts)}</span>
-              <span className={s.sep}>·</span>
-              <span>Enrolled {p.enroll_count}×</span>
-            </div>
+      {/* Metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 12, marginBottom: 14 }}>
+        {metrics.map((m, i) => (
+          <div key={i} style={{ background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 11, padding: '13px 15px' }}>
+            <div style={{ fontSize: 11, color: 'var(--tlo)' }}>{m.label}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 19, fontWeight: 600, marginTop: 6, color: m.hi || 'var(--thi)' }}>{m.value}</div>
           </div>
+        ))}
+      </div>
 
-          <div className={s.headerActions}>
-            <button
-              className={`${s.btn} ${reenrolling ? s.btnLoading : ''}`}
-              onClick={handleReenroll}
-              disabled={reenrolling}
-            >
-              {reenrolling
-                ? <><Spinner size={12} /> Re-enrolling...</>
-                : <><Icon name="refresh" size={13} /> Re-enroll</>}
-            </button>
+      {/* Face + appearance */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+        <Card pad={18}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Đặc trưng khuôn mặt</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
+            {faceRows.map((f, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ fontSize: 12, color: 'var(--tlo)' }}>{f.label}</span>
+                {f.bar != null
+                  ? <span style={{ display: 'flex', alignItems: 'center', gap: 8, width: 140 }}><SimBar value={f.bar} /><span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tmd)' }}>{f.bar.toFixed(2)}</span></span>
+                  : <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tmd)' }}>{f.text}</span>}
+              </div>
+            ))}
           </div>
-        </div>
-
-        {reenrollResult && (
-          <div className={`${s.toast} ${reenrollResult.error ? s.toastErr : s.toastOk}`}>
-            {reenrollResult.error
-              ? <><Icon name="alert-triangle" size={13} /> {reenrollResult.error}</>
-              : <><Icon name="check" size={13} /> Job #{reenrollResult.job_id} đã enqueue — worker f87 sẽ xử lý trong ~{reenrollResult.delay_s}s</>
-            }
+        </Card>
+        <Card pad={18}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Ghi chú ngoại hình</div>
+          <div style={{ fontSize: 12.5, color: 'var(--tmd)', lineHeight: 1.7 }}>
+            {p.appearance_notes || '—'}
           </div>
-        )}
-
-        <div className={s.metricsRow}>
-          {[
-            { label: 'Face quality',  value: p.face_quality != null ? p.face_quality.toFixed(2) : '—', hi: (p.face_quality||0) >= 0.45 },
-            { label: 'Face source',   value: p.face_source_cam || '—' },
-            { label: 'Face frames',   value: p.face_frame_count ?? '—' },
-            { label: 'Enroll count',  value: `${p.enroll_count}×` },
-            { label: 'Body ratio',    value: p.body_ratio != null ? p.body_ratio.toFixed(1) : '—' },
-          ].map(c => (
-            <div key={c.label} className={s.metricCard}>
-              <div className={s.metricLabel}>{c.label}</div>
-              <div className={`${s.metricVal} ${c.hi ? s.valGreen : ''}`}>{c.value}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className={s.twoCol}>
-          <div className={s.card}>
-            <div className={s.cardHead}>Đặc trưng khuôn mặt</div>
-            <div className={s.scoreList}>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Face quality (avg)</span>
-                <ScoreBar value={p.face_quality} />
-              </div>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Confidence lvl</span>
-                <span className={s.scoreText}>
-                  {p.face_quality >= 0.45 ? 'CONFIDENT' : p.face_quality >= 0.30 ? 'POSSIBLE' : 'LOW'}
-                </span>
-              </div>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Embedding dim</span>
-                <span className={s.scoreText}>512-dim ArcFace R100</span>
-              </div>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Source camera</span>
-                <span className={s.scoreText}>{p.face_source_cam || '—'}</span>
-              </div>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Frames đóng góp</span>
-                <span className={s.scoreText}>{p.face_frame_count} frames</span>
-              </div>
-            </div>
+          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12, color: 'var(--tlo)' }}>
+            <div><span style={{ color: 'var(--txl)' }}>Lần đầu: </span><span style={{ fontFamily: 'var(--mono)' }}>{fmtDate(p.first_seen_ts)}</span></div>
+            <div><span style={{ color: 'var(--txl)' }}>Lần cuối: </span><span style={{ fontFamily: 'var(--mono)' }}>{fmtDate(p.last_seen_ts)}</span></div>
           </div>
+        </Card>
+      </div>
 
-          <div className={s.card}>
-            <div className={s.cardHead}>Màu sắc trang phục</div>
-            <div className={s.scoreList}>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Upper body (áo)</span>
-                <div className={s.colorRow}>
-                  <ScoreBar value={p.color_upper_sim} warn={0.4} ok={0.65} />
-                  {p.color_upper_hex && (
-                    <div className={s.colorSwatch} style={{ background: p.color_upper_hex }} />
-                  )}
-                </div>
-              </div>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Lower body (quần)</span>
-                <div className={s.colorRow}>
-                  <ScoreBar value={p.color_lower_sim} warn={0.4} ok={0.65} />
-                  {p.color_lower_hex && (
-                    <div className={s.colorSwatch} style={{ background: p.color_lower_hex }} />
-                  )}
-                </div>
-              </div>
-              <div className={s.scoreRow}>
-                <span className={s.scoreLabel}>Histogram dim</span>
-                <span className={s.scoreText}>24-dim HSV / body</span>
-              </div>
-              {p.appearance_notes && (
-                <div className={s.notesRow}>
-                  <Icon name="tag" size={12} />
-                  {p.appearance_notes}
-                </div>
-              )}
-              {p.body_ratio != null && (
-                <div className={s.scoreRow}>
-                  <span className={s.scoreLabel}>Body ratio (H/W)</span>
-                  <span className={s.scoreText}>{p.body_ratio.toFixed(2)}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className={s.card}>
-          <div className={s.cardHead}>Lịch sử enroll sessions</div>
-          {(!p.sessions || p.sessions.length === 0) ? (
-            <div className={s.empty}>Chưa có session nào</div>
-          ) : (
-            <div className={s.timeline}>
-              {p.sessions.map((ses, i) => {
-                const gateLogHref = (() => {
-                  if (!ses.event_time_vn) return null
-                  const d = new Date(ses.event_time_vn).toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
-                  const params = new URLSearchParams({ since: d, until: d })
-                  if (ses.room_label) params.set('room', ses.room_label)
-                  return `/gate-log?${params}`
-                })()
-                return (
-                  <div key={ses.id} className={s.tlItem}>
-                    <div className={s.tlDotCol}>
-                      <div className={`${s.tlDot}
-                        ${ses.status === 'enrolled' ? s.dotGreen
-                          : ses.status === 'low_quality' ? s.dotAmber
-                          : s.dotDim}`} />
-                      {i < p.sessions.length - 1 && <div className={s.tlLine} />}
-                    </div>
-                    <div className={s.tlContent}>
-                      <div className={s.tlHead}>
-                        <span className={s.tlTime}>{fmtDt(ses.event_time_vn)}</span>
-                        <Tag text={ses.status} mod={STATUS_MOD[ses.status]} />
-                        {ses.is_new && <Tag text="first enroll" mod={s.tagBlue} />}
-                        <span className={s.tlQ}>{fmtPct(ses.overall_quality)}</span>
-                        {gateLogHref && (
-                          <button
-                            className={s.tlLink}
-                            onClick={() => navigate(gateLogHref)}
-                            title="Xem trong Gate Log"
-                          >
-                            → Gate Log
-                          </button>
-                        )}
-                      </div>
-                      <div className={s.tlMeta}>
-                        {ses.room_label && <span>{ses.room_label}</span>}
-                        {ses.merge_sim != null && (
-                          <span>merge sim {ses.merge_sim.toFixed(2)}</span>
-                        )}
+      {/* Timeline + stays */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 14 }}>
+        <Card pad={18}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 16 }}>Lịch sử enroll sessions</div>
+          {sessions.length === 0
+            ? <div style={{ fontSize: 12, color: 'var(--tlo)' }}>Chưa có session nào</div>
+            : (
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {sessions.map((t, i) => {
+                  const isGood = t.status === 'enrolled'
+                  return (
+                    <div key={t.id} style={{ display: 'flex', gap: 12, paddingBottom: 16 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, marginTop: 3, background: isGood ? 'var(--in)' : 'var(--am)' }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--tmd)' }}>{fmtShortDate(t.event_time_vn)} {fmtTime(t.event_time_vn)}</span>
+                          <Badge kind={isGood ? 'green' : 'amber'}>{t.status}</Badge>
+                          {t.overall_quality > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{Math.round(t.overall_quality * 100)}%</span>}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--tlo)', marginTop: 4 }}>{t.room_label}</div>
                       </div>
                     </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className={s.card}>
-          <div className={s.cardHead}>Room stays</div>
-          {(!p.stays || p.stays.length === 0) ? (
-            <div className={s.empty}>Chưa có room stay nào</div>
-          ) : (
-            <div className={s.stayGrid}>
-              {p.stays.map((stay, i) => (
-                <div key={i} className={`${s.stayCard} ${!stay.exit_ts ? s.stayActive : ''}`}>
-                  <div className={s.stayHead}>
-                    <span className={s.stayRoom}>{stay.room_id}</span>
-                    <Tag
-                      text={stay.exit_ts ? 'đã ra' : 'đang ở'}
-                      mod={stay.exit_ts ? s.tagDim : s.tagGreen}
-                    />
-                  </div>
-                  <div className={s.stayRows}>
-                    <div className={s.stayRow}>
-                      <Icon name="login" size={12} />
-                      <span>Vào: {fmtDt(stay.entry_ts)}</span>
-                      {stay.entry_confidence && (
-                        <Tag text={stay.entry_confidence} mod={s.tagDim} />
-                      )}
-                    </div>
-                    <div className={s.stayRow}>
-                      <Icon name="logout" size={12} />
-                      <span>{stay.exit_ts ? `Ra: ${fmtDt(stay.exit_ts)}` : 'Ra: —'}</span>
-                    </div>
-                    {!stay.exit_ts && stay.entry_ts && (
-                      <div className={s.stayDuration}>
-                        {fmtHr((Date.now() - new Date(stay.entry_ts)) / 3_600_000)}
+                  )
+                })}
+              </div>
+            )
+          }
+        </Card>
+        <Card pad={18}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Room stays</div>
+          {stays.length === 0
+            ? <div style={{ fontSize: 12, color: 'var(--tlo)' }}>Chưa có lịch sử phòng</div>
+            : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {stays.map((st, i) => {
+                  const active = st.exit_ts == null
+                  return (
+                    <div key={i} style={{ borderRadius: 10, padding: 13, border: `1px solid ${active ? 'var(--in3)' : 'var(--ln)'}`, background: active ? 'oklch(0.2 0.02 152 / 0.22)' : 'var(--bg1)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600 }}>{st.room_id}</span>
+                        <Badge kind={active ? 'green' : 'dim'}>{active ? 'đang ở' : 'đã ra'}</Badge>
                       </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
+                      <div style={{ fontSize: 11, color: 'var(--tlo)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <span>Vào: {st.entry_ts ? `${fmtShortDate(st.entry_ts)} ${fmtTime(st.entry_ts)}` : '—'}</span>
+                        <span>Ra: {st.exit_ts ? `${fmtShortDate(st.exit_ts)} ${fmtTime(st.exit_ts)}` : '—'}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          }
+        </Card>
       </div>
     </div>
   )

@@ -1,1052 +1,440 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Card, Badge, Icon, SimBar, Avatar, Modal, Btn, color4, Spinner, Empty } from '../components/UI'
 import {
-  getEnrollSummary, getEnrollQueue, getEnrollSessions,
-  getEnrollSession, getEnrollProfiles, patchEnrollProfile,
-  getOccupancy, getEnrollJobs, postBackfill, cancelJob, retryJob,
-  retrySession, postReleaseStuck, getWorkerStatus, assignSession, searchProfiles,
-  getEnrollByUnlockAll,
+  STATUS, CONF, CAM_COLORS, simColor,
+} from './enrollData'
+import {
+  getEnrollSummary, getEnrollQueue, getEnrollSessions, getEnrollSession,
+  getEnrollProfiles, getOccupancy, getEnrollJobs,
+  assignSession, searchProfiles, postBackfill, postReleaseStuck, getWorkerStatus,
+  retrySession, getEnrollReview, getDuplicates, dismissCluster,
 } from '../api/client'
-import { Icon, Spinner, Empty, Lightbox } from '../components/UI'
-import s from './Enroll.module.css'
+import { fmtTime, fmtShortDate, timeAgo, fmtDuration, snapUrl } from '../utils'
 
-// ── Helpers ───────────────────────────────────────────────────────
-const fmtDt = (v) =>
-  v ? new Date(v).toLocaleString('vi-VN', {
-    dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Ho_Chi_Minh',
-  }) : '—'
-const fmtPct = (v) => (v != null ? `${(v * 100).toFixed(0)}%` : '—')
-const fmtMs  = (v) => (v != null ? `${v}ms` : '—')
-const fmtHr  = (v) => (v != null ? `${Number(v).toFixed(1)}h` : '—')
+const TABS = [
+  { id: 'sessions',  label: 'Sessions' },
+  { id: 'review',    label: 'Cần xử lý' },
+  { id: 'dup',       label: 'Trùng lặp' },
+  { id: 'profiles',  label: 'Profiles' },
+  { id: 'occupancy', label: 'Occupancy' },
+  { id: 'jobs',      label: 'Jobs' },
+]
 
-const STATUS_META = {
-  enrolled:     { icon: '✓', label: 'enrolled',     cls: s.stEnrolled },
-  low_quality:  { icon: '⚠', label: 'low quality',  cls: s.stLowQ },
-  no_detection: { icon: '–', label: 'no detection', cls: s.stNone },
-  failed:       { icon: '✕', label: 'failed',       cls: s.stFailed },
-  processing:   { icon: '…', label: 'processing',   cls: s.stRunning },
-  running:      { icon: '…', label: 'running',      cls: s.stRunning },
-  done:         { icon: '✓', label: 'done',         cls: s.stEnrolled },
-  pending:      { icon: '○', label: 'pending',      cls: s.stNone },
-  skipped:      { icon: '–', label: 'skipped',      cls: s.stNone },
-}
+const RoomTag = ({ children }) => <Badge kind="teal">{children}</Badge>
 
-// Hiển thị kết quả nhận diện outgoing
-function RecognizedPersonCard({ name, room, gender, sim, faceEventId, size = 32 }) {
-  const src = faceEventId ? `/api/media/snapshot/${faceEventId}` : null
-  return (
-    <div className={s.recognizedCard}>
-      <FaceAvatar gender={gender} confidence="gate_code" eventId={faceEventId} size={size} noLightbox />
-      <div className={s.recognizedInfo}>
-        <div className={s.recognizedName}>{name || 'Unknown'}</div>
-        {room && <div className={s.recognizedRoom}>{room}</div>}
-        {sim != null && (
-          <div className={s.recognizedSim}>{(sim * 100).toFixed(0)}% match</div>
-        )}
-      </div>
-    </div>
-  )
-}
-const ROW_CLS = {
-  enrolled:   s.rowEnrolled,
-  done:       s.rowEnrolled,
-  failed:     s.rowFailed,
-  low_quality:s.rowLowQ,
-  processing: s.rowRunning,
-  running:    s.rowRunning,
-}
-const CONF_META = {
-  gate_code:       { cls: s.stEnrolled, label: 'gate code',   color: '#22c55e' },
-  camera_chain:    { cls: s.stTeal,     label: 'camera',      color: '#0d9488' },
-  appearance_only: { cls: s.stLowQ,     label: 'appearance',  color: '#f59e0b' },
-  unknown:         { cls: s.stNone,     label: 'unknown',     color: '#475569' },
-}
-
-// ── CamThumb ──────────────────────────────────────────────────────
-const STATUS_COLOR = {
-  enrolled: '#22c55e', low_quality: '#f59e0b', no_detection: '#475569',
-  failed: '#ef4444', processing: '#60a5fa', done: '#22c55e',
-}
-
-function CamThumb({ camId, quality, status, eventId, width = 60, height = 42 }) {
-  const c     = STATUS_COLOR[status] || '#475569'
-  const q     = quality || 0
-  const pct   = q > 0.01 ? `${Math.round(q * 100)}%` : status === 'processing' ? '…' : '—'
-  const label = !camId || camId === '—' ? 'no-cam' : camId.length > 14 ? camId.slice(0, 14) : camId
-  const snapSrc = eventId ? `/api/media/snapshot/${eventId}` : null
-  const [lbOpen, setLbOpen] = useState(false)
-
-  return (
-    <div className={s.camThumb} style={{ width, height, border: `1px solid ${c}44` }}>
-      {snapSrc ? (
-        <img
-          src={snapSrc}
-          alt={camId}
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 1, cursor: 'zoom-in' }}
-          onError={e => { e.currentTarget.style.display = 'none' }}
-          onClick={e => { e.stopPropagation(); setLbOpen(true) }}
-        />
-      ) : (
-        <>
-          <div className={s.camScanline} />
-          <svg className={s.camSilhouette} width={24} height={32} viewBox="0 0 44 60">
-            <circle cx={22} cy={12} r={9} fill="#94a3b8" />
-            <path d="M2 60 Q2 36 22 36 Q42 36 42 60" fill="#94a3b8" />
-          </svg>
-        </>
-      )}
-      <div className={s.camQChip} style={{ background: `${c}cc`, border: `1px solid ${c}`, color: '#fff', zIndex: 10 }}>
-        {pct}
-      </div>
-      <div className={s.camLabel} style={{ zIndex: 10 }}>{label}</div>
-      <div className={s.camRec} style={{ zIndex: 10 }} />
-      {status === 'processing' && (
-        <div className={s.camProcessing} style={{ zIndex: 11 }}>
-          <div className={s.camSpinner} />
-        </div>
-      )}
-      {lbOpen && snapSrc && <Lightbox src={snapSrc} onClose={() => setLbOpen(false)} />}
-    </div>
-  )
-}
-
-// ── FaceAvatar ────────────────────────────────────────────────────
-function FaceAvatar({ gender, confidence, eventId, size = 36, noLightbox = false }) {
-  const [imgErr, setImgErr] = useState(false)
-  const [lbOpen, setLbOpen] = useState(false)
-  const bc  = CONF_META[confidence]?.color || '#475569'
-  const bg  = gender === 'female' ? '#501620' : gender === 'male' ? '#162850' : '#1a2030'
-  const src = eventId && !imgErr ? `/api/media/snapshot/${eventId}` : null
-
-  return (
-    <div className={s.faceAvatar} style={{
-      width: size, height: size,
-      background: `radial-gradient(circle at 50% 62%, ${bg} 0%, #050810 100%)`,
-      border: `2px solid ${bc}55`,
-      boxShadow: `0 0 0 2px ${bc}1a, 0 2px 8px rgba(0,0,0,.6)`,
-      cursor: src && !noLightbox ? 'zoom-in' : undefined,
-    }}
-      onClick={src && !noLightbox ? e => { e.stopPropagation(); setLbOpen(true) } : undefined}
-    >
-      {src
-        ? <img src={src} alt="" style={{ position:'absolute', inset:0, width:'100%', height:'100%', objectFit:'cover', objectPosition:'top center', borderRadius:'50%' }}
-            onError={() => setImgErr(true)} />
-        : <svg className={s.faceAvatarSvg} width={size} height={size * 1.15} viewBox="0 0 100 115">
-            <ellipse cx={50} cy={34} rx={21} ry={25} fill="#c8bdb0" />
-            <path d="M5 115 Q5 68 50 68 Q95 68 95 115" fill="#c8bdb0" />
-          </svg>
-      }
-      {lbOpen && src && <Lightbox src={src} onClose={() => setLbOpen(false)} />}
-    </div>
-  )
-}
-
-// ── Status badge ──────────────────────────────────────────────────
-function StatusBadge({ status }) {
-  const m = STATUS_META[status] || { icon: '?', label: status, cls: s.stNone }
-  return <span className={`${s.badge} ${m.cls}`}>{m.icon} {m.label}</span>
-}
-
-// ── Score bar ─────────────────────────────────────────────────────
-function ScoreBar({ value, label }) {
-  const pct = Math.min(100, ((value || 0)) * 100)
-  const cls = pct >= 70 ? s.barGreen : pct >= 45 ? s.barAmber : s.barRed
-  return (
-    <div className={s.barWrap}>
-      {label && <span className={s.barLabel}>{label}</span>}
-      <div className={s.barTrack}>
-        <div className={`${s.barFill} ${cls}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className={s.barVal}>{value != null ? value.toFixed(2) : '—'}</span>
-    </div>
-  )
-}
-
-// ── Metric Cards ──────────────────────────────────────────────────
-function MetricCards({ summary, queue }) {
-  const pending = queue.find(q => q.status === 'pending')?.cnt || 0
-  const running = queue.find(q => q.status === 'running')?.cnt || 0
-  const failed  = queue.find(q => q.status === 'failed')?.cnt  || 0
-
-  const cards = [
-    { label: 'Sessions 24h',   val: summary.sessions_24h },
-    { label: 'Enrolled 24h',   val: summary.enrolled_24h,  hi: 'green' },
-    { label: 'Failed 24h',     val: summary.failed_24h,    hi: summary.failed_24h > 0 ? 'red' : null },
-    { label: 'Profiles',       val: summary.total_profiles },
-    { label: 'Phòng có khách', val: `${summary.rooms_occupied || 0}/12`, hi: summary.rooms_occupied > 0 ? 'teal' : null },
-    { label: 'Avg quality',    val: fmtPct(summary.avg_quality_24h) },
-    { label: 'Jobs pending',   val: pending, hi: pending > 0 ? 'amber' : null },
-    { label: 'Jobs running',   val: running, hi: running > 0 ? 'blue' : null },
-    { label: 'Jobs failed',    val: failed,  hi: failed > 0  ? 'red'  : null },
-  ]
-  return (
-    <div className={s.metricsGrid}>
-      {cards.map(c => (
-        <div key={c.label} className={s.metricCard}>
-          <div className={s.metricLabel}>{c.label}</div>
-          <div className={`${s.metricVal} ${c.hi ? s[`hi_${c.hi}`] : ''}`}>
-            {c.val ?? '—'}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ── Assign Modal ──────────────────────────────────────────────────
-function AssignModal({ session, onClose, onDone }) {
-  const [q,        setQ]        = useState('')
-  const [results,  setResults]  = useState([])
-  const [loading,  setLoading]  = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [newName,  setNewName]  = useState('')
-  const [newRoom,  setNewRoom]  = useState(session?.room_label || '')
-  const [saving,   setSaving]   = useState(false)
-  const [error,    setError]    = useState('')
-  const timer = useRef(null)
-
-  const search = useCallback(async (val) => {
-    setLoading(true)
-    try {
-      const { data } = await searchProfiles(val)
-      setResults(data)
-    } finally { setLoading(false) }
-  }, [])
-
-  useEffect(() => {
-    clearTimeout(timer.current)
-    timer.current = setTimeout(() => search(q), 280)
-    return () => clearTimeout(timer.current)
-  }, [q, search])
-
-  useEffect(() => { search('') }, [search])
-
-  const doAssign = async (profileId) => {
-    setSaving(true); setError('')
-    try {
-      await assignSession(session.id, { profile_id: profileId })
-      onDone()
-    } catch (e) {
-      setError(e.response?.data?.detail || 'Lỗi khi gán')
-    } finally { setSaving(false) }
-  }
-
-  const doCreate = async () => {
-    if (!newName.trim()) { setError('Cần nhập tên'); return }
-    setSaving(true); setError('')
-    try {
-      await assignSession(session.id, { display_name: newName.trim(), known_room: newRoom })
-      onDone()
-    } catch (e) {
-      setError(e.response?.data?.detail || 'Lỗi khi tạo')
-    } finally { setSaving(false) }
-  }
-
-  return (
-    <div className={s.overlay} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className={s.modal}>
-        <div className={s.modalHead}>
-          <span className={s.modalTitle}>Gán người vào session</span>
-          <button className={s.btnIcon} onClick={onClose}><Icon name="x" size={14}/></button>
-        </div>
-        <div className={s.modalSub}>{session.room_label} · {fmtDt(session.event_time_vn)}</div>
-
-        {!creating ? (
-          <>
-            <input
-              className={s.searchInput}
-              placeholder="Tìm theo tên hoặc phòng…"
-              value={q} onChange={e => setQ(e.target.value)}
-              autoFocus
-            />
-            <div className={s.searchResults}>
-              {loading && <div className={s.searchMsg}><Spinner /></div>}
-              {!loading && results.length === 0 && (
-                <div className={s.searchMsg}>Không tìm thấy profile nào</div>
-              )}
-              {results.map(p => (
-                <div key={p.id} className={s.searchRow} onClick={() => doAssign(p.id)}>
-                  <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={30} noLightbox />
-                  <div className={s.searchInfo}>
-                    <div className={s.searchName}>{p.display_name || `Unknown ${p.id.slice(0,6)}`}</div>
-                    <div className={s.searchMeta}>{p.known_room} · quality {p.face_quality?.toFixed(2)}</div>
-                  </div>
-                  <span className={`${s.badge} ${CONF_META[p.confidence_lvl]?.cls || s.stNone}`}>
-                    {CONF_META[p.confidence_lvl]?.label || p.confidence_lvl}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <button className={s.btnSecondary} style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
-              onClick={() => setCreating(true)}>
-              + Tạo người mới
-            </button>
-          </>
-        ) : (
-          <div className={s.createForm}>
-            <label className={s.formLabel}>Tên</label>
-            <input className={s.searchInput} placeholder="Nguyễn Văn A"
-              value={newName} onChange={e => setNewName(e.target.value)} autoFocus />
-            <label className={s.formLabel}>Phòng</label>
-            <input className={s.searchInput} value={newRoom}
-              onChange={e => setNewRoom(e.target.value)} />
-            <div className={s.modalActions}>
-              <button className={s.btnSecondary} onClick={() => setCreating(false)}>← Quay lại</button>
-              <button className={s.btnPrimary} onClick={doCreate} disabled={saving}>
-                {saving ? 'Đang lưu…' : 'Tạo & gán'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {error && <div className={s.errorBox}>{error}</div>}
-        {saving && !creating && <div className={s.searchMsg}><Spinner /></div>}
-      </div>
-    </div>
-  )
-}
-
-// ── Backfill Modal ────────────────────────────────────────────────
-function BackfillModal({ onClose }) {
-  const [days,      setDays]      = useState(7)
-  const [room,      setRoom]      = useState('')
-  const [direction, setDirection] = useState('incoming')
-  const [loading,   setLoading]   = useState(false)
-  const [result,    setResult]    = useState(null)
-
-  const run = async () => {
-    setLoading(true)
-    setResult(null)
-    try {
-      const { data } = await postBackfill({ days, room: room || undefined, direction })
-      setResult(data)
-    } finally { setLoading(false) }
-  }
-
-  return (
-    <div className={s.overlay} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className={s.modal}>
-        <div className={s.modalHead}>
-          <span className={s.modalTitle}>Backfill enroll jobs</span>
-          <button className={s.btnIcon} onClick={onClose}><Icon name="x" size={14}/></button>
-        </div>
-        <label className={s.formLabel}>Hướng</label>
-        <div className={s.fgroup} style={{ marginBottom: 8 }}>
-          <button className={direction === 'incoming' ? s.fbtnOn : s.fbtn}
-            onClick={() => setDirection('incoming')}>↓ Vào (Incoming)</button>
-          <button className={direction === 'outgoing' ? s.fbtnOn : s.fbtn}
-            onClick={() => setDirection('outgoing')}>↑ Ra (Outgoing)</button>
-        </div>
-        <label className={s.formLabel}>Số ngày nhìn lại</label>
-        <input type="number" className={s.searchInput}
-          value={days} onChange={e => setDays(+e.target.value)} min={1} max={90} />
-        <label className={s.formLabel} style={{ marginTop: 8 }}>Phòng cụ thể (để trống = tất cả)</label>
-        <input className={s.searchInput} placeholder="P.302"
-          value={room} onChange={e => setRoom(e.target.value)} />
-        {result && (
-          <div className={s.resultBox}>
-            Đã enqueue <strong>{result.enqueued}</strong> / {result.total_found} events ({result.direction})
-          </div>
-        )}
-        <div className={s.modalActions}>
-          <button className={s.btnSecondary} onClick={onClose}>Hủy</button>
-          <button className={s.btnPrimary} onClick={run} disabled={loading}>
-            {loading ? 'Đang chạy…' : 'Chạy backfill'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Session Detail ────────────────────────────────────────────────
-function SessionDetail({ d, onClose, onRetry, onAssign }) {
+export default function Enroll() {
+  const [tab, setTab]         = useState('sessions')
+  const [drawer, setDrawer]   = useState(null)   // session id
+  const [assign, setAssign]   = useState(null)   // session id for assign
+  const [summary, setSummary] = useState(null)
+  const [queue, setQueue]     = useState([])
+  const [worker, setWorker]   = useState([])
   const navigate = useNavigate()
-  const canRetry = ['failed', 'low_quality', 'no_detection', 'skipped'].includes(d.status)
 
-  const toGateLog = () => {
-    if (!d.event_time_vn) return
-    const dt = new Date(d.event_time_vn)
-    const toVnStr = (ms) =>
-      new Date(ms).toLocaleString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' }).replace(' ', 'T')
-    if (d.direction === 'outgoing') {
-      // Narrow ±5-minute window in VN time so only this specific exit event shows
-      const params = new URLSearchParams({
-        since:     toVnStr(dt.getTime() - 5 * 60000),
-        until:     toVnStr(dt.getTime() + 5 * 60000),
-        direction: 'outgoing',
-      })
-      navigate(`/gate-log?${params}`)
-    } else {
-      const dateStr = dt.toLocaleDateString('sv-SE', { timeZone: 'Asia/Ho_Chi_Minh' })
-      const params = new URLSearchParams({ since: dateStr, until: dateStr })
-      if (d.room_label) params.set('room', d.room_label)
-      navigate(`/gate-log?${params}`)
-    }
+  function loadHeader() {
+    getEnrollSummary().then(r => setSummary(r.data)).catch(() => {})
+    getEnrollQueue().then(r => setQueue(r.data)).catch(() => {})
+    getWorkerStatus().then(r => setWorker(r.data)).catch(() => {})
   }
 
+  useEffect(() => { loadHeader() }, [])
+
+  const metrics = summary ? [
+    { label: 'Sessions 24h',    value: String(summary.sessions_24h ?? 0),  valueColor: '' },
+    { label: 'Enrolled 24h',    value: String(summary.enrolled_24h ?? 0),  valueColor: 'var(--in)' },
+    { label: 'Failed 24h',      value: String(summary.failed_24h ?? 0),    valueColor: 'var(--alm)' },
+    { label: 'Profiles',        value: String(summary.total_profiles ?? 0), valueColor: '' },
+    { label: 'Phòng có khách',  value: String(summary.rooms_occupied ?? 0), valueColor: 'var(--te)' },
+    { label: 'Avg quality',     value: summary.avg_quality_24h != null ? `${Math.round(summary.avg_quality_24h * 100)}%` : '—', valueColor: '' },
+  ] : Array(6).fill({ label: '…', value: '—' })
+
+  const queueDots = [
+    { label: 'pending', value: queue.find(q => q.status === 'pending')?.cnt ?? 0, dot: 'var(--am)' },
+    { label: 'running', value: queue.find(q => q.status === 'running')?.cnt ?? 0, dot: 'var(--out)' },
+    { label: 'failed',  value: queue.find(q => q.status === 'failed')?.cnt ?? 0,  dot: 'var(--alm)' },
+  ]
+
+  const workerInfo = worker[0]
+  const workerOk = workerInfo && workerInfo.seconds_ago < 120
+
   return (
-    <div className={s.detailPanel}>
-      <div className={s.detailHeader}>
-        <span className={s.detailTitle}>Chi tiết session</span>
-        <StatusBadge status={d.status} />
-        <span className={`${s.badge} ${s.stTeal}`}>{d.room_label}</span>
-        <span className={s.detailMeta}>{fmtDt(d.event_time_vn)}</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          {canRetry && (
-            <button className={`${s.btnAction} ${s.btnRetry}`} onClick={onRetry}>
-              ↺ Retry
-            </button>
-          )}
-          <button className={`${s.btnAction} ${s.btnAssign}`} onClick={onAssign}>
-            ＋ Gán người
-          </button>
-          {d.event_time_vn && (
-            <button className={s.btnSecondary} onClick={toGateLog} title="Xem trong Gate Log">
-              → Gate Log
-            </button>
-          )}
-          <button className={s.btnIcon} onClick={onClose}>
-            <Icon name="x" size={14} />
-          </button>
+    <div style={{ padding: '20px 24px', position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div>
+          <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.3px', margin: 0 }}>Enroll · Nhận diện khuôn mặt</h1>
+          <div style={{ fontSize: 12.5, color: 'var(--tlo)', marginTop: 4 }}>Quản lý phiên enroll, profile khách và hàng đợi xử lý</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Btn variant="ghost" onClick={() => postBackfill({ days: 1 }).then(loadHeader)}><Icon name="refresh" size={13} />Backfill 1d</Btn>
+          <Btn variant="ghost" onClick={() => { postReleaseStuck().then(loadHeader) }}><Icon name="refresh" size={13} />Release stuck</Btn>
+          <Btn variant="ghost" onClick={loadHeader}><Icon name="refresh" size={13} />Làm mới</Btn>
         </div>
       </div>
 
-      <div className={s.detailMeta2}>
-        <span>Quality: <strong>{fmtPct(d.overall_quality)}</strong></span>
-        <span>Face score: <strong>{d.best_face_score?.toFixed(3) || '—'}</strong></span>
-        <span>Dừng ở: <strong>{d.stopped_at_cam || 'hết cam'}</strong></span>
-        <span>Nguồn: <strong>{d.used_video ? '📹 video' : '📷 snapshot'}</strong></span>
-        <span>Thời gian xử lý: <strong>{fmtMs(d.total_ms)}</strong></span>
-        {d.direction && (
-          <span>Hướng: <strong style={{ color: d.direction === 'incoming' ? '#60a5fa' : '#a855f7' }}>
-            {d.direction === 'incoming' ? '↓ Vào' : '↑ Ra'}
-          </strong></span>
-        )}
-        {d.user_name  && <span>User: <strong>{d.user_name}</strong></span>}
+      {/* Metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 12, marginBottom: 12 }}>
+        {metrics.map((m, i) => (
+          <div key={i} style={{ background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 11, padding: '14px 15px' }}>
+            <div style={{ fontSize: 11.5, color: 'var(--tlo)' }}>{m.label}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 24, fontWeight: 600, marginTop: 8, letterSpacing: '-0.5px', color: m.valueColor || 'var(--thi)' }}>{m.value}</div>
+          </div>
+        ))}
       </div>
 
-      {d.direction === 'outgoing' && (
-        <div className={s.section}>
-          <div className={s.sectionLabel}>Kết quả nhận diện</div>
-          {d.recognized_person_id ? (
-            <div className={s.recognizedBig}>
-              <RecognizedPersonCard
-                name={d.recognized_name}
-                room={d.recognized_room}
-                gender={d.recognized_gender}
-                sim={d.recognition_sim}
-                faceEventId={d.recognized_face_event_id}
-                size={56}
-              />
-              <div className={s.recognizedMeta}>
-                <span className={`${s.badge} ${s.stEnrolled}`}>✓ Đã nhận diện</span>
-                {d.recognition_sim != null && (
-                  <span className={`${s.badge} ${s.stTeal}`}>{(d.recognition_sim * 100).toFixed(0)}% similarity</span>
-                )}
-                <div className={s.recognizedNote}>Room_stay đã được đóng tại thời điểm ra</div>
-              </div>
-            </div>
-          ) : (
-            <div className={s.recognizedEmpty}>
-              <span className={s.countGray}>Không nhận diện được người</span>
-              <button className={`${s.btnAction} ${s.btnAssign}`} style={{ marginLeft: 8 }} onClick={onAssign}>
-                ＋ Gán thủ công
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {d.error_msg && (
-        <div className={s.errorBox}>⚠ {d.error_msg}</div>
-      )}
-
-      {d.camera_clips?.length > 0 && (
-        <div className={s.section}>
-          <div className={s.sectionLabel}>Kết quả từng camera</div>
-          <div className={s.camGrid}>
-            {d.camera_clips.map(c => (
-              <div key={c.camera_id}
-                className={`${s.camCard} ${c.stopped_here ? s.camStopped : ''}`}>
-                <div className={s.camHead}>
-                  <strong>{c.camera_id}</strong>
-                  {c.stopped_here && <span className={`${s.badge} ${s.stEnrolled}`}>✓ dừng</span>}
-                  <span className={s.camSrc}>{c.source_type === 'snapshot' ? '📷' : '📹'}</span>
-                  {c.clip_finalized && <span className={`${s.badge} ${s.stRunning}`}>🎬 video</span>}
-                </div>
-
-                {/* Video player nếu có clip */}
-                {c.clip_finalized && c.frigate_event_id ? (
-                  <video
-                    className={s.clipVideo}
-                    src={`/api/media/clip/${c.frigate_event_id}`}
-                    controls
-                    muted
-                    playsInline
-                    preload="metadata"
-                    poster={`/api/media/snapshot/${c.frigate_event_id}`}
-                  />
-                ) : (
-                  <CamThumb
-                    camId={c.camera_id}
-                    quality={c.confidence}
-                    status={c.stopped_here ? 'enrolled' : 'low_quality'}
-                    eventId={c.frigate_event_id}
-                    width={150}
-                    height={100}
-                  />
-                )}
-
-                <div style={{ marginTop: 8 }}>
-                  <ScoreBar value={c.confidence} />
-                </div>
-                <div className={s.camMeta}>
-                  <span>{c.frames_processed} frames</span>
-                  <span>{c.persons_detected} người</span>
-                  {c.face_score > 0 && <span>face {c.face_score?.toFixed(2)}</span>}
-                  {c.has_multi_person && <span className={`${s.badge} ${s.stLowQ}`}>multi</span>}
-                  {c.has_occlusion && <span className={`${s.badge} ${s.stLowQ}`}>bị che</span>}
-                  {!c.frigate_event_id && <span className={s.noMedia}>no media</span>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {d.direction !== 'outgoing' && d.persons?.length > 0 && (
-        <div className={s.section}>
-          <div className={s.sectionLabel}>Người được enroll</div>
-          <div className={s.personGrid}>
-            {d.persons.map(p => (
-              <div key={p.id} className={s.personCard}>
-                <div className={s.personHead}>
-                  <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} size={44} />
-                  <div>
-                    <div className={s.personName}>
-                      {p.display_name || `Unknown · ${p.id?.slice(0,6)}`}
-                      {p.is_new && <span className={`${s.badge} ${s.stEnrolled}`} style={{marginLeft:6}}>mới</span>}
-                    </div>
-                    <div className={s.personSub}>{p.known_room}{p.age_estimate ? ` · ~${p.age_estimate}t` : ''}</div>
-                    <span className={`${s.badge} ${CONF_META[p.confidence_lvl]?.cls || s.stNone}`}>
-                      {CONF_META[p.confidence_lvl]?.label || p.confidence_lvl}
-                    </span>
-                  </div>
-                </div>
-                <ScoreBar value={p.face_quality} label="face" />
-                {p.appearance_notes && (
-                  <div className={s.notes}>{p.appearance_notes}</div>
-                )}
-                {p.merge_sim != null && (
-                  <div className={s.simScore}>similarity {(p.merge_sim * 100).toFixed(0)}%</div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Sessions Tab ──────────────────────────────────────────────────
-const STUCK_SESSION_MS = 5 * 60 * 1000
-const SES_LIMIT = 50
-
-function SessionsTab() {
-  const [rows,      setRows]   = useState([])
-  const [total,     setTotal]  = useState(0)
-  const [offset,    setOffset] = useState(0)
-  const [loading,   setLoading] = useState(true)
-  const [roomF,     setRoomF]   = useState('')
-  const [statusF,   setStatusF] = useState('')
-  const [dirF,      setDirF]    = useState('')
-  const [selected,  setSel]     = useState(null)
-  const [detail,    setDetail]  = useState(null)
-  const [detailL,   setDL]      = useState(false)
-  const [assignSes, setAssign]  = useState(null)
-  const [resetting,   setReset]       = useState(false)
-  const [retryingAll, setRetryingAll] = useState(false)
-
-  const load = useCallback(async (off = 0) => {
-    setLoading(true)
-    try {
-      const params = { limit: SES_LIMIT, offset: off }
-      if (roomF)   params.room      = roomF
-      if (statusF) params.status    = statusF
-      if (dirF)    params.direction = dirF
-      const { data } = await getEnrollSessions(params)
-      setRows(data.items ?? data)
-      setTotal(data.total ?? (data.items ? data.items.length : data.length))
-      setOffset(off)
-    } finally { setLoading(false) }
-  }, [roomF, statusF, dirF])
-
-  useEffect(() => { load(0) }, [load])
-
-  const openDetail = async (id) => {
-    if (selected === id) { setSel(null); setDetail(null); return }
-    setSel(id); setDL(true)
-    try {
-      const { data } = await getEnrollSession(id)
-      setDetail(data)
-    } finally { setDL(false) }
-  }
-
-  const handleRetry = async () => {
-    if (!detail) return
-    try {
-      await retrySession(detail.id)
-      setDetail(prev => ({ ...prev, status: 'processing' }))
-      setRows(prev => prev.map(r => r.id === detail.id ? { ...r, status: 'processing' } : r))
-    } catch (e) {
-      alert(e.response?.data?.detail || 'Lỗi khi retry')
-    }
-  }
-
-  const handleAssignDone = async () => {
-    setAssign(null)
-    if (detail) {
-      const { data } = await getEnrollSession(detail.id)
-      setDetail(data)
-    }
-    load(offset)
-  }
-
-  const handleReleaseStuck = async () => {
-    setReset(true)
-    try {
-      const { data } = await postReleaseStuck()
-      load(0)
-      alert(`Đã reset: ${data.jobs_reset} job${data.jobs_reset !== 1 ? 's' : ''}, ${data.sessions_reset} session${data.sessions_reset !== 1 ? 's' : ''}`)
-    } catch (e) {
-      alert(e.response?.data?.detail || 'Lỗi khi reset')
-    } finally { setReset(false) }
-  }
-
-  const stuckSessions = rows.filter(r =>
-    r.status === 'processing' && r.created_at &&
-    (Date.now() - new Date(r.created_at).getTime()) > STUCK_SESSION_MS
-  )
-  const processingRows = rows.filter(r => r.status === 'processing')
-
-  const handleRetryAll = async () => {
-    setRetryingAll(true)
-    try {
-      await Promise.all(processingRows.map(r => retrySession(r.id).catch(() => {})))
-      load(offset)
-    } finally { setRetryingAll(false) }
-  }
-
-  return (
-    <div>
-      <div className={s.filterRow}>
-        <input className={s.filterInput} placeholder="Lọc phòng (P.302…)"
-          value={roomF} onChange={e => setRoomF(e.target.value)} />
-        <select className={s.filterSelect}
-          value={statusF} onChange={e => setStatusF(e.target.value)}>
-          <option value="">Tất cả trạng thái</option>
-          {['enrolled','low_quality','no_detection','failed','processing','skipped'].map(v => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
-        <div className={s.fgroup}>
-          {[['','Tất cả'],['incoming','↓ Vào'],['outgoing','↑ Ra']].map(([k,l]) => (
-            <button key={k} className={`${s.fbtn} ${dirF===k?s.fbtnOn:''}`}
-              onClick={() => setDirF(k)}>{l}</button>
-          ))}
-        </div>
-        <button className={s.btnSecondary} onClick={() => load(0)}>
-          <Icon name="refresh" size={13} /> Làm mới
-        </button>
-        {processingRows.length > 0 && (
-          <button
-            className={s.btnSecondary}
-            onClick={handleRetryAll}
-            disabled={retryingAll}
-            title="Retry tất cả sessions đang processing"
-          >
-            {retryingAll ? <Spinner size={12} /> : '↺'} Retry {processingRows.length} processing
-          </button>
-        )}
-        {stuckSessions.length > 0 && (
-          <button
-            className={`${s.btnSecondary} ${s.btnWarn}`}
-            onClick={handleReleaseStuck}
-            disabled={resetting}
-            title="Reset sessions bị kẹt ở processing (worker không chạy)"
-          >
-            {resetting ? <Spinner size={12} /> : '⚠'} Reset {stuckSessions.length} bị kẹt
-          </button>
-        )}
-        <span className={s.filterMeta}>
-          {total > SES_LIMIT
-            ? `${offset + 1}–${Math.min(offset + SES_LIMIT, total)} / ${total} sessions`
-            : `${total} sessions`}
+      {/* Queue strip */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20, background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 11, padding: '12px 18px', marginBottom: 16 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tmd)' }}>Hàng đợi xử lý</span>
+        {queueDots.map(q => (
+          <span key={q.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--tmd)' }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: q.dot }} />{q.label} <span style={{ fontFamily: 'var(--mono)', fontWeight: 600, color: 'var(--thi)' }}>{q.value}</span>
+          </span>
+        ))}
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: workerOk ? 'var(--in)' : 'var(--alm)' }}>
+          {workerInfo
+            ? `Worker ${workerInfo.worker_id} · ${workerOk ? 'hoạt động' : `offline ${workerInfo.seconds_ago}s`}`
+            : 'Worker — không có dữ liệu'}
         </span>
       </div>
 
-      <div className={s.tableWrap}>
-        <table className={s.table}>
-          <thead>
-            <tr>
-              <th style={{ width: 70 }}>Snap</th>
-              <th>Thời gian</th>
-              <th>Phòng</th>
-              <th>Trạng thái</th>
-              <th>Chiều</th>
-              <th>Người / Nhận diện</th>
-              <th>Quality</th>
-              <th>Camera</th>
-              <th className={s.tdRight}>ms</th>
-              <th style={{ width: 72 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr><td colSpan={10} className={s.tdCenter}><Spinner /></td></tr>
-            )}
-            {!loading && rows.length === 0 && (
-              <tr><td colSpan={10} className={s.tdCenter}><Empty /></td></tr>
-            )}
-            {!loading && rows.map(r => {
-              const stuck = r.status === 'processing' && r.created_at &&
-                (Date.now() - new Date(r.created_at).getTime()) > STUCK_SESSION_MS
-              return (
-                <tr key={r.id}
-                  data-status={r.status}
-                  className={`${s.tableRow} ${ROW_CLS[r.status] || ''} ${stuck ? s.rowStuck : ''} ${selected === r.id ? s.tableRowActive : ''}`}
-                  onClick={() => openDetail(r.id)}>
-                  <td style={{ padding: '6px 10px' }}>
-                    <CamThumb
-                      camId={r.stopped_at_cam}
-                      quality={r.overall_quality}
-                      status={r.status}
-                      eventId={r.snap_event_id}
-                      width={60}
-                      height={42}
-                    />
-                  </td>
-                  <td className={s.tdTime}>{fmtDt(r.event_time_vn)}</td>
-                  <td><span className={`${s.badge} ${s.stTeal}`}>{r.room_label}</span></td>
-                  <td>
-                    <StatusBadge status={r.status} />
-                    {stuck && <span className={s.stuckTag}>kẹt</span>}
-                  </td>
-                  <td>
-                    <span className={r.direction === 'incoming' ? s.dirIn : s.dirOut}>
-                      {r.direction === 'incoming' ? '↓ Vào' : '↑ Ra'}
-                    </span>
-                  </td>
-                  <td>
-                    {r.direction === 'outgoing' ? (
-                      r.recognized_name ? (
-                        <RecognizedPersonCard
-                          name={r.recognized_name}
-                          room={r.recognized_room}
-                          gender={r.recognized_gender}
-                          sim={r.recognition_sim}
-                          faceEventId={r.recognized_face_event_id}
-                          size={28}
-                        />
-                      ) : (
-                        <span className={s.countGray} style={{ fontSize: 11 }}>
-                          {r.status === 'enrolled' ? 'Nhận diện được' : 'Chưa nhận diện'}
-                        </span>
-                      )
-                    ) : (
-                      <div className={s.tdCenter}>
-                        <span className={r.persons_enrolled > 0 ? s.countGreen : s.countGray}>
-                          {r.persons_enrolled}
-                        </span>
-                        <span className={s.countSep}>/</span>
-                        {r.person_count}
-                      </div>
-                    )}
-                  </td>
-                  <td className={s.tdWide}><ScoreBar value={r.overall_quality} /></td>
-                  <td className={s.tdMuted}>{r.stopped_at_cam || '—'}</td>
-                  <td className={`${s.tdMuted} ${s.tdRight}`}>{fmtMs(r.total_ms)}</td>
-                  <td onClick={e => e.stopPropagation()}>
-                    <div className={s.actionCell}>
-                      {['failed','low_quality','no_detection','skipped'].includes(r.status) && (
-                        <button className={`${s.btnAction} ${s.btnRetry}`}
-                          title="Retry"
-                          onClick={async (e) => {
-                            e.stopPropagation()
-                            try {
-                              await retrySession(r.id)
-                              setRows(prev => prev.map(x => x.id === r.id ? { ...x, status: 'processing' } : x))
-                            } catch (err) { alert(err.response?.data?.detail || 'Lỗi') }
-                          }}>
-                          ↺
-                        </button>
-                      )}
-                      <button className={`${s.btnAction} ${s.btnAssign}`}
-                        title="Gán người"
-                        onClick={(e) => { e.stopPropagation(); setAssign(r) }}>
-                        ＋
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, background: 'oklch(0.17 0.006 255)', border: '1px solid var(--ln)', borderRadius: 10, padding: 4, width: 'fit-content', marginBottom: 16, flexWrap: 'wrap' }}>
+        {TABS.map(t => {
+          const active = tab === t.id
+          return (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '8px 15px', borderRadius: 8, fontSize: 12.5, fontWeight: active ? 600 : 500, fontFamily: 'inherit', border: 'none', cursor: 'pointer', background: active ? 'var(--inb)' : 'transparent', color: active ? 'oklch(0.85 0.11 152)' : 'var(--tlo)' }}>
+              {t.label}
+              {t.note && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--txl)', background: 'var(--bg2)', borderRadius: 20, padding: '1px 6px', marginLeft: 5 }}>TODO</span>}
+            </button>
+          )
+        })}
       </div>
 
-      {total > SES_LIMIT && (
-        <div className={s.pagRow}>
-          <button className={s.btnSecondary} disabled={offset === 0} onClick={() => load(offset - SES_LIMIT)}>
-            ← Trước
-          </button>
-          <span className={s.pagInfo}>{offset + 1}–{Math.min(offset + SES_LIMIT, total)} / {total}</span>
-          <button className={s.btnSecondary} disabled={offset + SES_LIMIT >= total} onClick={() => load(offset + SES_LIMIT)}>
-            Sau →
-          </button>
-        </div>
-      )}
+      {tab === 'sessions'  && <SessionsTab onOpen={id => setDrawer(id)} onAssign={id => setAssign(id)} />}
+      {tab === 'review'    && <ReviewTab onOpen={id => setDrawer(id)} onAssign={id => setAssign(id)} />}
+      {tab === 'dup'       && <DupTab onMerge={id => navigate(`/enroll/merge/${id}`)} />}
+      {tab === 'profiles'  && <ProfilesTab onOpen={p => navigate(`/enroll/profiles/${p.id}`)} />}
+      {tab === 'occupancy' && <OccupancyTab />}
+      {tab === 'jobs'      && <JobsTab onRefresh={loadHeader} />}
 
-      {(detail || detailL) && (
-        <>
-          <div className={s.detailDrawerBg} onClick={() => { setDetail(null); setSel(null) }} />
-          <div className={s.detailDrawer}>
-            {detailL
-              ? <div className={s.detailLoading}><Spinner /></div>
-              : <SessionDetail
-                  d={detail}
-                  onClose={() => { setDetail(null); setSel(null) }}
-                  onRetry={handleRetry}
-                  onAssign={() => setAssign(detail)}
-                />
-            }
-          </div>
-        </>
-      )}
-
-      {assignSes && (
-        <AssignModal
-          session={assignSes}
-          onClose={() => setAssign(null)}
-          onDone={handleAssignDone}
-        />
-      )}
+      {drawer != null && <SessionDrawer id={drawer} onClose={() => setDrawer(null)} onAssign={id => { setDrawer(null); setAssign(id) }} onRetry={() => { setDrawer(null); loadHeader() }} />}
+      {assign != null && <AssignModal sessionId={assign} onClose={() => { setAssign(null); loadHeader() }} />}
     </div>
   )
 }
 
-// ── Profiles Tab ──────────────────────────────────────────────────
-function ProfilesTab() {
-  const navigate  = useNavigate()
-  const [rows,    setRows]    = useState([])
+/* ── Review tab ─────────────────────────────────────────────── */
+const REV_COLS = '44px 1.4fr 0.7fr 1.1fr 0.7fr 2fr 0.8fr'
+const PAGE_REV = 20
+
+function ReviewTab({ onOpen, onAssign }) {
+  const [items, setItems]   = useState([])
+  const [total, setTotal]   = useState(0)
+  const [offset, setOffset] = useState(0)
+  const [days, setDays]     = useState(7)
   const [loading, setLoading] = useState(true)
-  const [roomF,   setRoomF]   = useState('')
-  const [confF,   setConfF]   = useState('')
 
-  const load = useCallback(async () => {
+  function load(off = 0, d = days) {
     setLoading(true)
-    try {
-      const params = {}
-      if (roomF) params.room       = roomF
-      if (confF) params.confidence = confF
-      const { data } = await getEnrollProfiles(params)
-      setRows(data)
-    } finally { setLoading(false) }
-  }, [roomF, confF])
+    getEnrollReview({ limit: PAGE_REV, offset: off, days: d })
+      .then(r => { setItems(r.data.items); setTotal(r.data.total); setOffset(off) })
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load(0) }, [])
 
-  useEffect(() => { load() }, [load])
+  if (loading && !items.length) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
 
   return (
     <div>
-      <div className={s.filterRow}>
-        <input className={s.filterInput} placeholder="Lọc tên hoặc phòng"
-          value={roomF} onChange={e => setRoomF(e.target.value)} />
-        <select className={s.filterSelect}
-          value={confF} onChange={e => setConfF(e.target.value)}>
-          <option value="">Tất cả confidence</option>
-          {['gate_code','camera_chain','appearance_only','unknown'].map(v => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
-        <button className={s.btnSecondary} onClick={load}>
-          <Icon name="refresh" size={13} /> Làm mới
-        </button>
-        <span className={s.filterMeta}>{rows.length} profiles</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+        <span style={{ fontSize: 12, color: 'var(--tlo)' }}>Hiển thị {days} ngày gần nhất:</span>
+        {[7, 14, 30].map(d => (
+          <span key={d} onClick={() => { setDays(d); load(0, d) }}
+            style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--ln)', background: days === d ? 'var(--inb)' : 'var(--bg1)', color: days === d ? 'oklch(0.85 0.11 152)' : 'var(--tlo)' }}>
+            {d}d
+          </span>
+        ))}
+        <span style={{ marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{total} sessions cần xử lý</span>
       </div>
-
-      {loading ? <div className={s.center}><Spinner /></div> : (
-        <div className={s.profileGrid}>
-          {rows.length === 0 && <div className={s.center}><Empty /></div>}
-          {rows.map(p => (
-            <div key={p.id} className={s.profileCard}
-              onClick={() => navigate(`/enroll/profiles/${p.id}`)}>
-              <div className={s.profileAvatar}>
-                <FaceAvatar gender={p.gender} confidence={p.confidence_lvl} eventId={p.face_event_id} size={72} />
+      {items.length === 0 ? (
+        <Empty message="Không có session nào cần xử lý" />
+      ) : (
+        <Card>
+          <div style={{ display: 'grid', gridTemplateColumns: REV_COLS, gap: 10, padding: '11px 14px', fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.8px', color: 'var(--txl)', textTransform: 'uppercase', borderBottom: '1px solid var(--bg2)' }}>
+            <div>Snap</div><div>Thời gian</div><div>Phòng</div><div>Trạng thái</div><div>Chiều</div><div>Lý do</div><div>Quality</div>
+          </div>
+          {items.map(r => {
+            const [sk, sl] = STATUS[r.status] ?? ['dim', r.status]
+            const isIn = r.direction === 'incoming'
+            const reason = r.error_msg
+              ? r.error_msg.slice(0, 60)
+              : r.recognized_person_id == null
+              ? 'enrolled nhưng không có profile'
+              : '—'
+            return (
+              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: REV_COLS, gap: 10, alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--bg1)' }}>
+                <Avatar gender={null} size={34} src={snapUrl(r.snap_event_id)} />
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tmd)' }}>{fmtTime(r.event_time_vn)} · {fmtShortDate(r.event_time_vn)}</div>
+                <div><Badge kind="teal">{r.room_label}</Badge></div>
+                <div><Badge kind={sk}>{sl}</Badge></div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: isIn ? 'var(--in)' : 'var(--out)' }}>{isIn ? '↓ Vào' : '↑ Ra'}</div>
+                <div style={{ fontSize: 11, color: 'var(--txl)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason}</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <span onClick={() => onOpen(r.id)} style={{ fontSize: 10.5, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--ln)', color: 'var(--tmd)', cursor: 'pointer' }}>Xem</span>
+                  <span onClick={() => onAssign(r.id)} style={{ fontSize: 10.5, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--ln2)', color: 'var(--in)', cursor: 'pointer' }}>Gán</span>
+                </div>
               </div>
-              <div className={s.profileName}>
-                {p.display_name || `Unknown · ${p.id.slice(0,6)}`}
-              </div>
-              <div className={s.profileSub}>
-                {p.gender === 'female' ? 'Nữ' : p.gender === 'male' ? 'Nam' : ''}
-                {p.age_estimate ? ` · ~${p.age_estimate}t` : ''}
-              </div>
-              <div className={s.profileBadges}>
-                <span className={`${s.badge} ${CONF_META[p.confidence_lvl]?.cls || s.stNone}`}>
-                  {CONF_META[p.confidence_lvl]?.label || p.confidence_lvl}
-                </span>
-                <span className={`${s.badge} ${s.stTeal}`}>{p.known_room}</span>
-              </div>
-              <ScoreBar value={p.face_quality} label="face" />
-              {p.appearance_notes && (
-                <div className={s.profileNotes}>{p.appearance_notes}</div>
-              )}
-              <div className={s.profileFooter}>
-                <span>×{p.enroll_count} enrolls</span>
-                <span>{fmtDt(p.last_seen_ts)}</span>
-              </div>
+            )
+          })}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 16px', borderTop: '1px solid var(--bg2)' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--txl)' }}>{offset + 1}–{Math.min(offset + PAGE_REV, total)} / {total}</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <span onClick={() => offset > 0 && load(offset - PAGE_REV)} style={{ fontSize: 11, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--ln)', color: offset > 0 ? 'var(--tmd)' : 'var(--txl)', cursor: offset > 0 ? 'pointer' : 'default' }}>← Trước</span>
+              <span onClick={() => offset + PAGE_REV < total && load(offset + PAGE_REV)} style={{ fontSize: 11, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--ln2)', color: offset + PAGE_REV < total ? 'var(--tmd)' : 'var(--txl)', cursor: offset + PAGE_REV < total ? 'pointer' : 'default' }}>Sau →</span>
             </div>
-          ))}
-        </div>
+          </div>
+        </Card>
       )}
     </div>
   )
 }
 
-// ── Occupancy Tab ─────────────────────────────────────────────────
-const FLOORS = [2, 3, 4, 5, 6, 7]
+/* ── Duplicates tab ──────────────────────────────────────────── */
+function DupTab({ onMerge }) {
+  const [clusters, setClusters] = useState([])
+  const [loading, setLoading]   = useState(true)
 
-function durLabel(hours) {
-  if (!hours) return ''
-  const h = parseFloat(hours)
-  if (h < 1) return `${Math.round(h * 60)}m`
-  return `${h.toFixed(1)}h`
-}
-
-function OccupancyTab() {
-  const navigate  = useNavigate()
-  const [rows,    setRows]    = useState([])
-  const [loading, setLoading] = useState(true)
-
-  const load = async () => {
+  function load() {
     setLoading(true)
-    try { const { data } = await getOccupancy(); setRows(data) }
-    finally { setLoading(false) }
+    getDuplicates().then(r => setClusters(r.data)).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [])
+
+  function handleDismiss(cluster) {
+    const memberIds = cluster.members.slice(1).map(m => m.id)
+    dismissCluster(cluster.cluster_id, { member_ids: memberIds })
+      .then(() => setClusters(cs => cs.filter(c => c.cluster_id !== cluster.cluster_id)))
   }
 
-  useEffect(() => {
-    load()
-    const t = setInterval(load, 60_000)
-    return () => clearInterval(t)
-  }, [])
-
-  const byRoom = rows.reduce((acc, r) => {
-    ;(acc[r.room_id] = acc[r.room_id] || []).push(r)
-    return acc
-  }, {})
-
-  const totalOccupied = Object.keys(byRoom).length
-  const totalGuests   = rows.length
+  if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+  if (!clusters.length) return <Empty message="Không phát hiện profile trùng lặp" />
 
   return (
     <div>
-      <div className={s.filterRow}>
-        <div className={s.occSummaryRow}>
-          <div className={s.occStat}>
-            <span className={s.occStatVal} style={{ color: totalOccupied > 0 ? '#4ade80' : 'var(--c-text-2)' }}>
-              {totalOccupied}
-            </span>
-            <span className={s.occStatLabel}>phòng có khách</span>
-          </div>
-          <div className={s.occStatDiv} />
-          <div className={s.occStat}>
-            <span className={s.occStatVal}>{totalGuests}</span>
-            <span className={s.occStatLabel}>khách đang ở</span>
-          </div>
-          <div className={s.occStatDiv} />
-          <div className={s.occStat}>
-            <span className={s.occStatVal}>{12 - totalOccupied}</span>
-            <span className={s.occStatLabel}>phòng trống</span>
-          </div>
-        </div>
-        <button className={s.btnSecondary} onClick={load} style={{ marginLeft: 'auto' }}>
-          <Icon name="refresh" size={13} /> Làm mới
-        </button>
+      <div style={{ fontSize: 12, color: 'var(--tlo)', marginBottom: 14 }}>
+        {clusters.length} cluster trùng lặp · threshold cosine similarity ≥ 0.82
       </div>
-
-      {loading ? (
-        <div className={s.center}><Spinner /></div>
-      ) : (
-        <div className={s.floorList}>
-          {FLOORS.map(floor => {
-            const rooms = [`P.${floor}01`, `P.${floor}02`]
-            const hasAny = rooms.some(r => byRoom[r]?.length > 0)
-            return (
-              <div key={floor} className={s.floorRow}>
-                <div className={`${s.floorLabel} ${hasAny ? s.floorLabelActive : ''}`}>
-                  Tầng {floor}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
+        {clusters.map(cluster => {
+          const [a, b] = cluster.members
+          return (
+            <div key={cluster.cluster_id} style={{ background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 13, padding: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600, color: 'var(--am)' }}>{Math.round(cluster.max_similarity * 100)}%</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--tlo)' }}>similarity · {cluster.members.length} profiles</span>
                 </div>
-                <div className={s.floorRooms}>
-                  {rooms.map(room => {
-                    const occ = byRoom[room] || []
-                    const occupied = occ.length > 0
+              </div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+                {[a, b].map((m, i) => m && (
+                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, borderRadius: 10, border: '1px solid var(--ln)', padding: '12px 8px' }}>
+                    <Avatar gender={m.gender} size={48} src={snapUrl(m.face_event_id)} />
+                    <div style={{ fontSize: 12.5, fontWeight: 600, textAlign: 'center' }}>{m.display_name || '—'}</div>
+                    <div style={{ fontSize: 10.5, color: 'var(--tlo)' }}>{m.known_room || '—'}</div>
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--txl)' }}>×{m.enroll_count} enrolls</div>
+                    {i === 1 && <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--am)' }}>{Math.round(m.similarity * 100)}% sim</div>}
+                  </div>
+                ))}
+                {cluster.members.length > 2 && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, border: '1px dashed var(--ln)', padding: '12px 8px', minWidth: 52, color: 'var(--txl)', fontSize: 11 }}>
+                    +{cluster.members.length - 2}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Btn variant="ghost" style={{ flex: 1, fontSize: 11.5 }} onClick={() => handleDismiss(cluster)}>Bỏ qua</Btn>
+                <Btn variant="primary" style={{ flex: 1, fontSize: 11.5 }} onClick={() => onMerge(cluster.cluster_id)}>Xem / Gộp</Btn>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ── Sessions ─────────────────────────────────────────────── */
+const SES_COLS = '52px 1.3fr 0.7fr 1.2fr 0.7fr 1.6fr 1fr 0.7fr'
+const PAGE = 20
+
+function SessionsTab({ onOpen, onAssign }) {
+  const [items, setItems]   = useState([])
+  const [total, setTotal]   = useState(0)
+  const [offset, setOffset] = useState(0)
+  const [loading, setLoading] = useState(true)
+
+  function load(off = 0) {
+    setLoading(true)
+    getEnrollSessions({ limit: PAGE, offset: off })
+      .then(r => { setItems(r.data.items); setTotal(r.data.total); setOffset(off) })
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load(0) }, [])
+
+  const totalPages  = Math.ceil(total / PAGE)
+  const currentPage = Math.floor(offset / PAGE) + 1
+
+  if (loading && !items.length) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+
+  return (
+    <Card>
+      <div style={{ display: 'grid', gridTemplateColumns: SES_COLS, gap: 10, padding: '11px 14px', fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.8px', color: 'var(--txl)', textTransform: 'uppercase', borderBottom: '1px solid var(--bg2)' }}>
+        <div>Snap</div><div>Thời gian</div><div>Phòng</div><div>Trạng thái</div><div>Chiều</div><div>Người / Nhận diện</div><div>Quality</div><div>ms</div>
+      </div>
+      {items.map(r => {
+        const [sk, sl] = STATUS[r.status] ?? ['dim', r.status]
+        const isIn = r.direction === 'incoming'
+        const hasRecog = r.recognized_person_id != null
+        const simPct = r.recognition_sim != null ? Math.round(r.recognition_sim * 100) : null
+        const kind = hasRecog ? 'recog' : (r.person_count > 1 ? 'group' : 'dim')
+        const who = hasRecog
+          ? r.recognized_name || `#${r.recognized_person_id}`
+          : r.person_count > 1
+          ? `${r.persons_enrolled ?? 0} / ${r.person_count} người`
+          : 'Chưa nhận diện'
+        const thumbSrc = snapUrl(r.snap_event_id)
+        return (
+          <div key={r.id} onClick={() => onOpen(r.id)} style={{ display: 'grid', gridTemplateColumns: SES_COLS, gap: 10, alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--bg1)', cursor: 'pointer' }}>
+            <Avatar gender={r.recognized_gender} size={34} src={thumbSrc} />
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tmd)' }}>{fmtTime(r.event_time_vn)} · {fmtShortDate(r.event_time_vn)}</div>
+            <div><Badge kind="teal">{r.room_label}</Badge></div>
+            <div><Badge kind={sk}>{sl}</Badge></div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: isIn ? 'var(--in)' : 'var(--out)' }}>{isIn ? '↓ Vào' : '↑ Ra'}</div>
+            <div style={{ minWidth: 0 }}>
+              {kind === 'recog' ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <Avatar gender={r.recognized_gender} size={24} />
+                  <span style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{who}</span>
+                  {simPct != null && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--in)' }}>{simPct}%</span>}
+                </span>
+              ) : <Badge kind={kind === 'group' ? 'green' : 'dim'}>{who}</Badge>}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <SimBar value={r.overall_quality ?? 0} width={60} />
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--tlo)', minWidth: 26 }}>{r.overall_quality > 0 ? r.overall_quality.toFixed(2) : '—'}</span>
+            </div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{r.total_ms ? `${r.total_ms}ms` : '—'}</div>
+          </div>
+        )
+      })}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 16px', borderTop: '1px solid var(--bg2)' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--txl)' }}>{offset + 1}–{Math.min(offset + PAGE, total)} / {total} sessions</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <span onClick={() => offset > 0 && load(offset - PAGE)} style={{ fontSize: 11, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--ln)', color: offset > 0 ? 'var(--tmd)' : 'var(--txl)', cursor: offset > 0 ? 'pointer' : 'default' }}>← Trước</span>
+          <span onClick={() => offset + PAGE < total && load(offset + PAGE)} style={{ fontSize: 11, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--ln2)', color: offset + PAGE < total ? 'var(--tmd)' : 'var(--txl)', cursor: offset + PAGE < total ? 'pointer' : 'default' }}>Sau →</span>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+/* ── Profiles ─────────────────────────────────────────────── */
+function ProfilesTab({ onOpen }) {
+  const [items, setItems]   = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    getEnrollProfiles({ limit: 40 })
+      .then(r => setItems(r.data))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+  if (!items.length) return <Empty message="Chưa có hồ sơ nào" />
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 14 }}>
+      {items.map(p => {
+        const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', p.confidence_lvl ?? 'unknown']
+        const thumbSrc = snapUrl(p.face_event_id)
+        return (
+          <div key={p.id} onClick={() => onOpen(p)} style={{ background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 12, padding: 18, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+            <Avatar gender={p.gender} size={66} src={thumbSrc} />
+            <div style={{ fontSize: 13.5, fontWeight: 600, textAlign: 'center' }}>{p.display_name}</div>
+            <div style={{ fontSize: 11, color: 'var(--tlo)' }}>{(p.gender === 'female' ? 'Nữ' : p.gender === 'male' ? 'Nam' : '—') + (p.age_estimate ? ` · ~${p.age_estimate}t` : '')}</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <Badge kind={ck}>{cl}</Badge><Badge kind="teal">{p.known_room || '—'}</Badge>
+            </div>
+            <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              <span style={{ fontSize: 10, color: 'var(--txl)' }}>face</span>
+              <SimBar value={p.face_quality ?? 0} />
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tlo)' }}>{p.face_quality?.toFixed(2) ?? '—'}</span>
+            </div>
+            <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--txl)', fontFamily: 'var(--mono)', borderTop: '1px solid var(--bg2)', paddingTop: 9 }}>
+              <span>×{p.enroll_count} enrolls</span>
+              <span>{p.last_seen_ts ? fmtShortDate(p.last_seen_ts) : '—'}</span>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ── Occupancy ────────────────────────────────────────────── */
+function OccupancyTab() {
+  const [rows, setRows]   = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    getOccupancy()
+      .then(r => setRows(r.data))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+
+  // Group by room_id
+  const roomMap = {}
+  rows.forEach(r => {
+    if (!roomMap[r.room_id]) roomMap[r.room_id] = []
+    roomMap[r.room_id].push(r)
+  })
+
+  const floors = [2, 3, 4, 5, 6, 7]
+  const durText = h => h < 1 ? `${Math.round(h * 60)}m` : `${Number(h).toFixed(1)}h`
+  const durColor = h => h > 8 ? 'var(--alm)' : h > 4 ? 'var(--am)' : 'var(--in)'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {floors.map(f => (
+        <div key={f} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr', gap: 12, alignItems: 'start' }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600, color: 'var(--tlo)', paddingTop: 14 }}>Tầng {f}</div>
+          {[`P.${f}01`, `P.${f}02`].map(rk => {
+            const g = roomMap[rk] || []
+            return (
+              <div key={rk} style={{ borderRadius: 11, padding: 13, border: `1px solid ${g.length ? 'var(--in3)' : 'var(--ln)'}`, background: g.length ? 'oklch(0.2 0.02 152 / 0.28)' : 'oklch(0.175 0.006 255)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600 }}>{rk}</span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: g.length ? 'oklch(0.8 0.12 152)' : 'var(--txl)' }}>{g.length ? `${g.length} người` : 'trống'}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {g.map((gu, gi) => {
+                    const hrs = Number(gu.hours_in_room ?? 0)
+                    const entryTime = gu.entry_ts ? fmtTime(gu.entry_ts) : '—'
                     return (
-                      <div key={room}
-                        className={`${s.roomBox} ${occupied ? s.roomBoxOccupied : s.roomBoxEmpty}`}>
-                        <div className={s.roomBoxHead}>
-                          <span className={s.roomBoxName}>{room}</span>
-                          {occupied ? (
-                            <span className={s.roomBoxCount}>{occ.length} người</span>
-                          ) : (
-                            <span className={s.roomBoxEmpty2}>trống</span>
-                          )}
-                        </div>
-                        {occupied && (
-                          <div className={s.guestList}>
-                            {occ.map((o, i) => {
-                              const hrs = parseFloat(o.hours_in_room || 0)
-                              const dur = durLabel(o.hours_in_room)
-                              const durPct = Math.min(100, (hrs / 24) * 100)
-                              return (
-                                <div key={i}
-                                  className={s.guestRow}
-                                  onClick={() => o.person_id && navigate(`/enroll/profiles/${o.person_id}`)}>
-                                  <FaceAvatar
-                                    gender={o.gender}
-                                    confidence={o.entry_confidence}
-                                    size={32}
-                                  />
-                                  <div className={s.guestInfo}>
-                                    <div className={s.guestName}>
-                                      {o.display_name || `Unknown ${o.person_id?.slice(0,6)}`}
-                                      {o.gender && (
-                                        <span className={s.guestMeta}>
-                                          {o.gender === 'female' ? ' ♀' : ' ♂'}
-                                          {o.age_estimate ? ` ~${o.age_estimate}t` : ''}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {o.appearance_notes && (
-                                      <div className={s.guestNotes}>{o.appearance_notes}</div>
-                                    )}
-                                    <div className={s.guestDurRow}>
-                                      <div className={s.guestDurTrack}>
-                                        <div className={s.guestDurFill}
-                                          style={{ width: `${durPct}%`,
-                                            background: hrs > 8 ? '#f87171' : hrs > 4 ? '#fbbf24' : '#4ade80' }} />
-                                      </div>
-                                      <span className={s.guestDurLabel}>{dur}</span>
-                                    </div>
-                                    <div className={s.guestTime}>
-                                      vào {fmtDt(o.entry_ts)}
-                                    </div>
-                                  </div>
-                                </div>
-                              )
-                            })}
+                      <div key={gi} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <Avatar gender={gu.gender} size={32} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{gu.display_name}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+                            <div style={{ flex: 1, maxWidth: 120, height: 5, borderRadius: 3, background: 'var(--bg3)', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', borderRadius: 3, width: `${Math.min(100, (hrs / 12) * 100)}%`, background: durColor(hrs) }} />
+                            </div>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--tmd)' }}>{durText(hrs)}</span>
+                            <span style={{ fontSize: 10, color: 'var(--txl)' }}>vào {entryTime}</span>
                           </div>
-                        )}
+                        </div>
                       </div>
                     )
                   })}
@@ -1055,391 +443,231 @@ function OccupancyTab() {
             )
           })}
         </div>
-      )}
+      ))}
     </div>
   )
 }
 
-// ── Jobs Tab ──────────────────────────────────────────────────────
-const STUCK_MS = 5 * 60 * 1000  // job running > 5 phút = kẹt
+/* ── Jobs ─────────────────────────────────────────────────── */
+const JOB_COLS = '1fr 0.8fr 0.8fr 1.2fr 0.8fr 1fr'
 
-function isStuckJob(r) {
-  return r.status === 'running' && r.started_at &&
-    (Date.now() - new Date(r.started_at).getTime()) > STUCK_MS
-}
-
-function JobsTab({ onRefreshStats }) {
-  const [rows,     setRows]     = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [resetting, setReset]   = useState(false)
-  const [statusF,  setStatusF]  = useState('')
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const { data } = await getEnrollJobs(statusF ? { status: statusF } : {})
-      setRows(data)
-    } finally { setLoading(false) }
-  }, [statusF])
-
-  useEffect(() => { load() }, [load])
-
-  const handleCancel = async (id) => {
-    await cancelJob(id)
-    load(); onRefreshStats?.()
-  }
-
-  const handleRetryJob = async (id) => {
-    try {
-      await retryJob(id)
-      load(); onRefreshStats?.()
-    } catch (e) {
-      alert(e.response?.data?.detail || 'Lỗi khi retry job')
-    }
-  }
-
-  const handleReleaseStuck = async () => {
-    setReset(true)
-    try {
-      const { data } = await postReleaseStuck()
-      load(); onRefreshStats?.()
-      alert(`Đã reset: ${data.jobs_reset} job${data.jobs_reset !== 1 ? 's' : ''}, ${data.sessions_reset} session${data.sessions_reset !== 1 ? 's' : ''}`)
-    } catch (e) {
-      alert(e.response?.data?.detail || 'Lỗi khi reset')
-    } finally { setReset(false) }
-  }
-
-  const hasRunning = rows.some(r => r.status === 'running')
-  const hasStuck   = rows.some(isStuckJob)
-
-  return (
-    <div>
-      <div className={s.filterRow}>
-        <select className={s.filterSelect} value={statusF} onChange={e => setStatusF(e.target.value)}>
-          <option value="">Tất cả</option>
-          {['pending','running','done','failed','skipped'].map(v => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
-        <button className={s.btnSecondary} onClick={load}><Icon name="refresh" size={13} /> Làm mới</button>
-        {hasRunning && (
-          <button
-            className={`${s.btnSecondary} ${hasStuck ? s.btnWarn : ''}`}
-            onClick={handleReleaseStuck}
-            disabled={resetting}
-            title="Reset tất cả jobs đang ở trạng thái running về pending, và sessions processing về failed"
-          >
-            {resetting ? <Spinner size={12} /> : '⚠'} Reset bị kẹt
-          </button>
-        )}
-        <span className={s.filterMeta}>{rows.length} jobs</span>
-      </div>
-      <div className={s.tableWrap}>
-        <table className={s.table}>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Phòng</th>
-              <th>Sự kiện</th>
-              <th>Trạng thái</th>
-              <th className={s.tdCenter}>Lần thử</th>
-              <th>Scheduled</th>
-              <th>Started</th>
-              <th>Finished</th>
-              <th>Worker</th>
-              <th>Lỗi</th>
-              <th style={{ width: 72 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && <tr><td colSpan={11} className={s.tdCenter}><Spinner /></td></tr>}
-            {!loading && rows.length === 0 && <tr><td colSpan={11} className={s.tdCenter}><Empty /></td></tr>}
-            {!loading && rows.map(r => {
-              const stuck = isStuckJob(r)
-              return (
-              <tr key={r.id}
-                className={`${s.tableRow} ${ROW_CLS[r.status] || ''} ${stuck ? s.rowStuck : ''}`}>
-                <td className={s.tdMuted}>{r.id}</td>
-                <td><span className={`${s.badge} ${s.stTeal}`}>{r.room_label}</span></td>
-                <td className={s.tdTime}>{fmtDt(r.event_time_vn)}</td>
-                <td>
-                  <StatusBadge status={r.status} />
-                  {stuck && <span className={s.stuckTag}>kẹt</span>}
-                </td>
-                <td className={s.tdCenter}>
-                  <span className={r.attempt_count >= r.max_attempts ? s.countGray : ''}>
-                    {r.attempt_count}/{r.max_attempts}
-                  </span>
-                </td>
-                <td className={s.tdTime}>{fmtDt(r.scheduled_at)}</td>
-                <td className={s.tdTime}>{r.started_at ? fmtDt(r.started_at) : <span className={s.tdMuted}>—</span>}</td>
-                <td className={s.tdTime}>{r.finished_at ? fmtDt(r.finished_at) : <span className={s.tdMuted}>—</span>}</td>
-                <td className={s.tdMuted} style={{ maxWidth: 110 }}>{r.locked_by || '—'}</td>
-                <td className={s.tdError}>{r.last_error || '—'}</td>
-                <td>
-                  <div className={s.actionCell}>
-                    {['failed','skipped'].includes(r.status) && (
-                      <button className={`${s.btnAction} ${s.btnRetry}`}
-                        title="Retry job"
-                        onClick={() => handleRetryJob(r.id)}>
-                        ↺
-                      </button>
-                    )}
-                    {r.status === 'pending' && (
-                      <button className={s.btnIcon} title="Hủy" onClick={() => handleCancel(r.id)}>
-                        <Icon name="x" size={12} />
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            )})}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-// ── Worker Tab ────────────────────────────────────────────────────
-const ONLINE_S   = 90    // seconds — green
-const DEGRADED_S = 300   // seconds — amber
-
-function workerHealth(secsAgo) {
-  if (secsAgo == null) return 'unknown'
-  if (secsAgo <= ONLINE_S)   return 'online'
-  if (secsAgo <= DEGRADED_S) return 'degraded'
-  return 'offline'
-}
-
-function fmtRelTime(s) {
-  if (s == null) return '—'
-  if (s < 60)   return `${s}s ago`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s ago`
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ago`
-}
-
-function fmtUptime(s) {
-  if (!s || s < 0) return '—'
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
-}
-
-const HEALTH_COLOR = { online: '#4ade80', degraded: '#fbbf24', offline: '#f87171', unknown: '#475569' }
-const HEALTH_CLS   = { online: s.stEnrolled, degraded: s.stLowQ, offline: s.stFailed, unknown: s.stNone }
-const Q_COLOR = { pending: '#fbbf24', running: '#60a5fa', done: '#4ade80', failed: '#f87171', skipped: '#475569' }
-
-function WorkerTab({ queue }) {
-  const [workers, setWorkers] = useState([])
+function JobsTab({ onRefresh }) {
+  const [items, setItems]   = useState([])
   const [loading, setLoading] = useState(true)
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getWorkerStatus()
-      setWorkers(data)
-    } catch { /* ignore */ } finally { setLoading(false) }
-  }, [])
+  function load() {
+    setLoading(true)
+    getEnrollJobs({ limit: 50 })
+      .then(r => setItems(r.data))
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [])
 
-  useEffect(() => {
-    load()
-    const t = setInterval(load, 15000)
-    return () => clearInterval(t)
-  }, [load])
-
-  const pending = queue.find(q => q.status === 'pending')?.cnt || 0
-  const anyOnline = workers.some(w => workerHealth(w.seconds_ago) === 'online')
+  if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
 
   return (
-    <div>
-      <div className={s.filterRow}>
-        <button className={s.btnSecondary} onClick={load}>
-          <Icon name="refresh" size={13} /> Làm mới
-        </button>
-        <span className={s.filterMeta}>cập nhật mỗi 15s</span>
+    <Card>
+      <div style={{ display: 'grid', gridTemplateColumns: JOB_COLS, gap: 10, padding: '11px 16px', fontFamily: 'var(--mono)', fontSize: 9.5, letterSpacing: '0.8px', color: 'var(--txl)', textTransform: 'uppercase', borderBottom: '1px solid var(--bg2)' }}>
+        <div>Job ID</div><div>Chiều</div><div>Phòng</div><div>Trạng thái</div><div>Thời lượng</div><div>Lúc</div>
       </div>
-
-      {loading && <div className={s.center}><Spinner /></div>}
-
-      {!loading && workers.length === 0 && (
-        <div className={s.workerCard} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div className={s.workerDot} style={{ background: '#475569' }} />
-          <div>
-            <div className={s.workerName}>Chưa có heartbeat</div>
-            <div className={s.workerSub}>Worker chưa chạy lần nào hoặc bảng <code>enroll.worker_heartbeat</code> chưa được tạo</div>
-          </div>
-        </div>
-      )}
-
-      {workers.map(w => {
-        const health = workerHealth(w.seconds_ago)
-        const dot    = HEALTH_COLOR[health]
+      {items.map(j => {
+        const [sk, sl] = STATUS[j.status] ?? ['dim', j.status]
+        const dur = fmtDuration(j.started_at, j.finished_at)
         return (
-          <div key={w.worker_id} className={s.workerCard}>
-            <div className={s.workerHead}>
-              <div className={s.workerDot} style={{ background: dot, boxShadow: `0 0 8px ${dot}` }}
-                   data-health={health} />
-              <div style={{ flex: 1 }}>
-                <div className={s.workerName}>{w.worker_id}</div>
-                <div className={s.workerSub}>
-                  {fmtRelTime(w.seconds_ago)}
-                  {w.hostname ? ` · ${w.hostname}` : ''}
-                  {' · '}last beat {fmtDt(w.last_beat)}
-                </div>
-              </div>
-              <span className={`${s.badge} ${HEALTH_CLS[health]}`}>
-                {health.toUpperCase()}
-              </span>
-            </div>
-
-            <div className={s.workerStats}>
-              <div className={s.workerStat}>
-                <div className={s.workerStatVal}>{w.active_jobs}/{w.max_concurrent}</div>
-                <div className={s.workerStatLabel}>Active jobs</div>
-              </div>
-              <div className={s.workerStatDiv} />
-              <div className={s.workerStat}>
-                <div className={s.workerStatVal}>{fmtUptime(w.uptime_s)}</div>
-                <div className={s.workerStatLabel}>Uptime</div>
-              </div>
-              <div className={s.workerStatDiv} />
-              <div className={s.workerStat}>
-                <div className={s.workerStatVal}>{w.poll_interval_s}s</div>
-                <div className={s.workerStatLabel}>Poll interval</div>
-              </div>
-              <div className={s.workerStatDiv} />
-              <div className={s.workerStat}>
-                <div className={s.workerStatVal} style={{ fontSize: '0.78rem' }}>{fmtDt(w.started_at)}</div>
-                <div className={s.workerStatLabel}>Started</div>
-              </div>
-            </div>
+          <div key={j.id} style={{ display: 'grid', gridTemplateColumns: JOB_COLS, gap: 10, alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--bg1)' }}>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600, color: 'var(--tmd)' }}>#{j.id}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: j.direction === 'incoming' ? 'var(--in)' : 'var(--out)' }}>{j.direction === 'incoming' ? '↓ Vào' : '↑ Ra'}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tmd)' }}>{j.room_label}</div>
+            <div><Badge kind={sk}>{sl}</Badge></div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tlo)' }}>{dur}</div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>{fmtTime(j.event_time_vn)}</div>
           </div>
         )
       })}
-
-      <div className={s.workerQueueHead}>Queue (7 ngày gần nhất)</div>
-      <div className={s.workerQueueGrid}>
-        {['pending', 'running', 'done', 'failed', 'skipped'].map(st => {
-          const cnt = queue.find(q => q.status === st)?.cnt || 0
-          return (
-            <div key={st} className={s.workerQueueCard}>
-              <div className={s.workerQueueCnt} style={{ color: Q_COLOR[st] }}>{cnt}</div>
-              <div className={s.workerQueueLabel}>{st}</div>
-            </div>
-          )
-        })}
-      </div>
-
-      {pending > 0 && !anyOnline && (
-        <div className={s.errorBox} style={{ marginTop: 8 }}>
-          ⚠ Có {pending} job đang pending nhưng worker không online. Kiểm tra worker-enroll trên f87.
-        </div>
-      )}
-      {pending > 0 && anyOnline && (
-        <div className={s.resultBox} style={{ marginTop: 8 }}>
-          ✓ Worker online — {pending} job pending sẽ được xử lý trong vài phút tới.
-        </div>
-      )}
-    </div>
+      {!items.length && <Empty message="Không có job nào trong 7 ngày" />}
+    </Card>
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────
-const TABS = [
-  { id: 'sessions',  label: 'Sessions' },
-  { id: 'profiles',  label: 'Profiles' },
-  { id: 'occupancy', label: 'Occupancy' },
-  { id: 'jobs',      label: 'Jobs' },
-  { id: 'worker',    label: 'Worker' },
-]
-
-export default function Enroll() {
-  const [searchParams] = useSearchParams()
-  const [tab,          setTab]      = useState(searchParams.get('tab') || 'sessions')
-  const [summary,      setSummary]  = useState({})
-  const [queue,        setQueue]    = useState([])
-  const [showBackfill, setBackfill] = useState(false)
-
-  const loadStats = async () => {
-    try {
-      const [s, q] = await Promise.all([
-        getEnrollSummary().then(r => r.data),
-        getEnrollQueue().then(r => r.data),
-      ])
-      setSummary(s); setQueue(q)
-    } catch { /* silent */ }
-  }
+/* ── Session drawer ───────────────────────────────────────── */
+function SessionDrawer({ id, onClose, onAssign, onRetry }) {
+  const [s, setS]     = useState(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadStats()
-    const t = setInterval(loadStats, 30000)
-    return () => clearInterval(t)
-  }, [])
+    setLoading(true)
+    getEnrollSession(id)
+      .then(r => setS(r.data))
+      .finally(() => setLoading(false))
+  }, [id])
 
-  const failedJobs   = queue.find(q => q.status === 'failed')?.cnt  || 0
-  const pendingJobs  = queue.find(q => q.status === 'pending')?.cnt || 0
-  const runningJobs  = queue.find(q => q.status === 'running')?.cnt || 0
+  if (!s && loading) return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'oklch(0.08 0.005 255 / 0.55)', zIndex: 40 }} />
+      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 520, maxWidth: '92%', background: 'oklch(0.175 0.006 255)', borderLeft: '1px solid var(--ln2)', zIndex: 41, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spinner size={24} />
+      </div>
+    </>
+  )
+  if (!s) return null
+
+  const [sk, sl] = STATUS[s.status] ?? ['dim', s.status]
+  const isIn = s.direction === 'incoming'
+  const cams = (s.camera_clips ?? []).sort((a, b) => a.camera_order - b.camera_order)
+  const who = s.recognized_name || (s.person_count > 1 ? `${s.persons_enrolled}/${s.person_count} người` : 'Chưa nhận diện')
+  const gender = s.recognized_gender || ''
 
   return (
-    <div className={s.page}>
-      <div className={s.pageTop}>
-        <div className={s.pageHeader}>
-          <div>
-            <h2 className={s.pageTitle}>Enroll</h2>
-            <span className={s.pageSub}>Camera pipeline · CompreFace · ArcFace R100</span>
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'oklch(0.08 0.005 255 / 0.55)', zIndex: 40 }} />
+      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 520, maxWidth: '92%', background: 'oklch(0.175 0.006 255)', borderLeft: '1px solid var(--ln2)', zIndex: 41, display: 'flex', flexDirection: 'column', boxShadow: '-16px 0 40px oklch(0 0 0 / 0.4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--bg2)' }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Chi tiết session</span>
+          <Badge kind={sk}>{sl}</Badge><Badge kind="teal">{s.room_label}</Badge>
+          <button onClick={onClose} style={{ marginLeft: 'auto', width: 30, height: 30, borderRadius: 7, background: 'transparent', border: '1px solid var(--ln)', color: 'var(--tlo)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Icon name="x" size={14} /></button>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
+            <Avatar gender={gender} size={52} src={snapUrl(s.snap_event_id)} />
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 600 }}>{who}</div>
+              <div style={{ fontSize: 12, color: 'var(--tlo)', marginTop: 3, fontFamily: 'var(--mono)' }}>{isIn ? '↓ Vào' : '↑ Ra'} · {fmtTime(s.event_time_vn)} · {fmtShortDate(s.event_time_vn)}</div>
+            </div>
           </div>
-          <div className={s.pageActions}>
-            {failedJobs > 0 && (
-              <span className={`${s.badge} ${s.stFailed}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => setTab('jobs')}>
-                {failedJobs} jobs failed
-              </span>
-            )}
-            {runningJobs > 0 && (
-              <span className={`${s.badge} ${s.stRunning}`}
-                style={{ cursor: 'pointer' }}
-                title="Có jobs đang running — nếu worker f87 không chạy, hãy vào tab Jobs và nhấn 'Reset bị kẹt'"
-                onClick={() => setTab('jobs')}>
-                {runningJobs} running
-              </span>
-            )}
-            {pendingJobs > 0 && (
-              <span className={`${s.badge} ${s.stLowQ}`}>{pendingJobs} pending</span>
-            )}
-            <button className={s.btnSecondary} onClick={() => setBackfill(true)}>
-              <Icon name="refresh" size={13} /> Backfill
-            </button>
-            <button className={s.btnSecondary} onClick={loadStats}>
-              <Icon name="refresh" size={13} />
-            </button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
+            {[
+              ['Overall quality', s.overall_quality > 0 ? s.overall_quality.toFixed(2) : '—', 'var(--in)'],
+              ['Người nhận diện', s.person_count ?? '—', ''],
+              ['Dừng ở cam', s.stopped_at_cam || '—', ''],
+              ['Thời gian xử lý', s.total_ms ? `${s.total_ms}ms` : '—', ''],
+            ].map(([k, v, c], i) => (
+              <div key={i} style={{ background: 'var(--bg2)', border: '1px solid var(--ln)', borderRadius: 9, padding: '11px 13px' }}>
+                <div style={{ fontSize: 10.5, color: 'var(--tlo)' }}>{k}</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: i === 0 ? 16 : 13, fontWeight: 600, marginTop: i === 0 ? 4 : 6, color: c || 'var(--thi)' }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          {cams.length > 0 && (
+            <>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '1px', color: 'var(--txl)', textTransform: 'uppercase', marginBottom: 10 }}>Kết quả từng camera</div>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(cams.length, 3)},1fr)`, gap: 10, marginBottom: 20 }}>
+                {cams.slice(0, 3).map((cam, ci) => (
+                  <div key={ci}>
+                    <div style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 9, overflow: 'hidden', border: `1px solid ${cam.stopped_here ? 'var(--in3)' : 'var(--ln)'}`, background: `linear-gradient(135deg, ${CAM_COLORS[cam.camera_id] || 'oklch(0.28 0.02 255)'}, oklch(0.15 0.01 255))` }}>
+                      {cam.frigate_event_id && (
+                        <img src={snapUrl(cam.frigate_event_id)} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                      )}
+                      <span style={{ position: 'absolute', top: 8, left: 9, fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 600, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.4)', padding: '1px 4px', borderRadius: 3 }}>{cam.camera_id}</span>
+                      {cam.stopped_here && <span style={{ position: 'absolute', bottom: 6, right: 8, fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--in)', background: 'oklch(0 0 0 / 0.5)', padding: '1px 4px', borderRadius: 3 }}>STOP</span>}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                      <SimBar value={cam.confidence ?? 0} />
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--tlo)' }}>{cam.confidence?.toFixed(2) ?? '—'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="primary" onClick={() => onAssign(id)} style={{ flex: 1 }}>＋ Gán người</Btn>
+            <Btn variant="ghost" onClick={() => retrySession(id).then(onRetry)}>↺ Retry</Btn>
           </div>
         </div>
+      </div>
+    </>
+  )
+}
 
-        <MetricCards summary={summary} queue={queue} />
+/* ── Assign modal ─────────────────────────────────────────── */
+function AssignModal({ sessionId, onClose }) {
+  const [query, setQuery]     = useState('')
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving]   = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newRoom, setNewRoom] = useState('')
 
-        <div className={s.tabs}>
-          {TABS.map(t => (
-            <button key={t.id}
-              className={`${s.tabBtn} ${tab === t.id ? s.tabActive : ''}`}
-              onClick={() => setTab(t.id)}>
-              {t.label}
-              {t.id === 'jobs'   && failedJobs > 0 && <span className={s.tabDot} />}
-              {t.id === 'worker' && runningJobs > 0 && <span className={s.tabDotBlue} />}
-            </button>
-          ))}
+  useEffect(() => {
+    setLoading(true)
+    searchProfiles(query)
+      .then(r => setResults(r.data))
+      .finally(() => setLoading(false))
+  }, [query])
+
+  function doAssign(profileId) {
+    setSaving(true)
+    assignSession(sessionId, { profile_id: profileId })
+      .then(onClose)
+      .finally(() => setSaving(false))
+  }
+
+  function doCreate() {
+    if (!newName.trim()) return
+    setSaving(true)
+    assignSession(sessionId, { display_name: newName.trim(), known_room: newRoom.trim() })
+      .then(onClose)
+      .finally(() => setSaving(false))
+  }
+
+  return (
+    <Modal onClose={onClose} width={440} align="top">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px', borderBottom: '1px solid var(--ln)' }}>
+        <span style={{ fontSize: 14, fontWeight: 600 }}>Gán người vào session</span>
+        <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: 'transparent', border: '1px solid var(--ln)', color: 'var(--tlo)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Icon name="x" size={13} /></button>
+      </div>
+      <div style={{ padding: '16px 18px' }}>
+        {/* Search existing */}
+        <div style={{ fontSize: 11, color: 'var(--txl)', textTransform: 'uppercase', letterSpacing: '0.8px', fontFamily: 'var(--mono)', marginBottom: 8 }}>Tìm hồ sơ</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 9, padding: '0 12px', height: 40, marginBottom: 10 }}>
+          <Icon name="search" size={15} style={{ color: 'var(--tlo)' }} />
+          <input
+            placeholder="Tìm theo tên hoặc phòng…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--thi)', fontSize: 13, fontFamily: 'inherit' }}
+          />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 200, overflowY: 'auto' }}>
+          {loading ? <div style={{ padding: 12, textAlign: 'center' }}><Spinner size={14} /></div>
+            : results.map(p => {
+              const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', 'unknown']
+              return (
+                <div key={p.id} onClick={() => doAssign(p.id)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 10px', borderRadius: 9, cursor: 'pointer' }}>
+                  <Avatar gender={p.gender} size={34} src={snapUrl(p.face_event_id)} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{p.display_name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--tlo)', fontFamily: 'var(--mono)' }}>{p.known_room}</div>
+                  </div>
+                  <Badge kind={ck}>{cl}</Badge>
+                </div>
+              )
+            })
+          }
+        </div>
+
+        {/* Create new */}
+        <div style={{ borderTop: '1px solid var(--bg2)', marginTop: 12, paddingTop: 12 }}>
+          <div style={{ fontSize: 11, color: 'var(--txl)', textTransform: 'uppercase', letterSpacing: '0.8px', fontFamily: 'var(--mono)', marginBottom: 8 }}>Tạo người mới</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              placeholder="Tên…"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              style={{ flex: 2, background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: '7px 10px', color: 'var(--thi)', fontSize: 12.5, fontFamily: 'inherit', outline: 'none' }}
+            />
+            <input
+              placeholder="Phòng (P.301)…"
+              value={newRoom}
+              onChange={e => setNewRoom(e.target.value)}
+              style={{ flex: 1, background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: '7px 10px', color: 'var(--thi)', fontSize: 12.5, fontFamily: 'inherit', outline: 'none' }}
+            />
+          </div>
+          <Btn variant="ghost" onClick={doCreate} disabled={saving || !newName.trim()} style={{ width: '100%', marginTop: 8 }}>
+            {saving ? '…' : '＋ Tạo & gán'}
+          </Btn>
         </div>
       </div>
-
-      <div className={s.pageBody}>
-        {tab === 'sessions'  && <SessionsTab />}
-        {tab === 'profiles'  && <ProfilesTab />}
-        {tab === 'occupancy' && <OccupancyTab />}
-        {tab === 'jobs'      && <JobsTab onRefreshStats={loadStats} />}
-        {tab === 'worker'    && <WorkerTab queue={queue} />}
-      </div>
-
-      {showBackfill && <BackfillModal onClose={() => setBackfill(false)} />}
-    </div>
+    </Modal>
   )
 }

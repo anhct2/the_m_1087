@@ -1,342 +1,247 @@
-import { useEffect, useState, useCallback, useRef, memo } from 'react'
-import { getRoomStatus, getRoomHistory } from '../api/client'
-import { Spinner, Icon } from '../components/UI'
+import { useState, useEffect } from 'react'
+import { Icon, Spinner } from '../components/UI'
+import { getRoomStatus, getRoomDay } from '../api/client'
+import { snapUrl, fmtTime, timeAgo } from '../utils'
 import s from './Rooms.module.css'
 
-const snapUrl = id => id ? `/api/media/snapshot/${id}` : null
-const VN_TZ  = 'Asia/Ho_Chi_Minh'
 const FLOORS = [2, 3, 4, 5, 6, 7]
 
-function timeAgo(iso) {
-  if (!iso) return null
-  const sec = Math.round((Date.now() - new Date(iso)) / 1000)
-  if (sec < 60) return 'vừa xong'
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m trước`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h trước`
-  return `${Math.floor(hr / 24)} ngày trước`
+// Ngày khách sạn: nếu trước 12:01 thì thuộc ngày hôm qua
+function hotelToday() {
+  const now = new Date()
+  const before1201 = now.getHours() < 12 || (now.getHours() === 12 && now.getMinutes() < 1)
+  if (before1201) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - 1)
+    return d.toLocaleDateString('sv')
+  }
+  return now.toLocaleDateString('sv')
 }
 
-function fmtDatetime(iso) {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return (
-    d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', timeZone: VN_TZ }) +
-    ' ' +
-    d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: VN_TZ })
-  )
-}
-
-/* ── Room lightbox (navigates within one room's image events) ── */
-function RoomLightbox({ events, idx, onClose, onNav }) {
-  const e       = events[idx]
-  const hasPrev = idx > 0
-  const hasNext = idx < events.length - 1
-  const [imgErr, setImgErr] = useState(false)
-
-  const prevIdx = useRef(null)
-  if (prevIdx.current !== idx) { prevIdx.current = idx; if (imgErr) setImgErr(false) }
+function RoomDrawer({ room, occupied, onClose }) {
+  const [data, setData]   = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [lb, setLb]       = useState(null) // { events, idx }
+  const dateStr = hotelToday()
 
   useEffect(() => {
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = '' }
-  }, [])
+    setLoading(true)
+    getRoomDay(room, dateStr)
+      .then(r => setData(r.data))
+      .finally(() => setLoading(false))
+  }, [room, dateStr])
 
   useEffect(() => {
-    const onKey = k => {
-      if (k.key === 'Escape')                onClose()
-      if (k.key === 'ArrowLeft'  && hasPrev) onNav(idx - 1)
-      if (k.key === 'ArrowRight' && hasNext) onNav(idx + 1)
+    function onKey(e) {
+      if (e.key === 'Escape') { if (lb) setLb(null); else onClose(); }
+      if (!lb) return
+      if (e.key === 'ArrowLeft')  setLb(p => p.idx > 0 ? { ...p, idx: p.idx - 1 } : p)
+      if (e.key === 'ArrowRight') setLb(p => p.idx < p.events.length - 1 ? { ...p, idx: p.idx + 1 } : p)
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [idx, hasPrev, hasNext, onClose, onNav])
+  }, [lb, onClose])
 
-  const src = snapUrl(e.event_id_n1)
-
-  return (
-    <div className={s.lbOverlay} onClick={onClose}>
-      {/* Camera badge */}
-      <span className={s.lbCamLabel}>N1</span>
-
-      {/* Close */}
-      <button className={s.lbClose} onClick={onClose}>
-        <Icon name="x" size={18} />
-      </button>
-
-      {/* Image */}
-      {src && !imgErr
-        ? <img src={src} alt="N1" className={s.lbImg}
-            onClick={ev => ev.stopPropagation()}
-            onError={() => setImgErr(true)} />
-        : <div className={s.lbNoSig} onClick={ev => ev.stopPropagation()}>NO SIGNAL</div>
-      }
-
-      {/* Side nav */}
-      <button
-        className={`${s.lbNav} ${s.lbNavLeft}`}
-        disabled={!hasPrev}
-        onClick={ev => { ev.stopPropagation(); onNav(idx - 1) }}
-      >
-        <Icon name="chevLeft" size={24} />
-      </button>
-      <button
-        className={`${s.lbNav} ${s.lbNavRight}`}
-        disabled={!hasNext}
-        onClick={ev => { ev.stopPropagation(); onNav(idx + 1) }}
-      >
-        <Icon name="chevron" size={24} />
-      </button>
-
-      {/* Bottom meta */}
-      <div className={s.lbMeta}>
-        <span className={s.lbDirIn}>↓ Vào</span>
-        <span className={s.lbName}>{e.user_name || '—'}</span>
-        <span className={s.lbTime}>{fmtDatetime(e.event_time)}</span>
-        <span className={s.lbCounter}>{idx + 1} / {events.length}</span>
-      </div>
-    </div>
-  )
-}
-
-/* ── Room Card ────────────────────────────────────────────────── */
-function RoomCard({ data, onClick }) {
-  const { room, occupied, last_event, last_user, today_count } = data
-  return (
-    <button
-      className={`${s.card} ${occupied ? s.cardOccupied : ''}`}
-      onClick={() => onClick(data)}
-    >
-      <div className={s.cardTop}>
-        <span className={`${s.dot} ${occupied ? s.dotOn : s.dotOff}`} />
-        <span className={s.roomNum}>{room}</span>
-        {today_count > 0 && <span className={s.todayBadge}>{today_count}</span>}
-      </div>
-      <div className={s.cardStatus}>{occupied ? 'Có người' : 'Vắng'}</div>
-      {last_event && (
-        <div className={s.cardMeta}>
-          {last_user && <span className={s.cardUser}>{last_user}</span>}
-          <span className={s.cardAgo}>{timeAgo(last_event)}</span>
-        </div>
-      )}
-    </button>
-  )
-}
-
-/* ── History Row ──────────────────────────────────────────────── */
-const HistRow = memo(function HistRow({ event: e, onImgClick }) {
-  const isIn = e.direction === 'incoming'
-  const thumb = isIn ? snapUrl(e.event_id_n1) : null
-  const [imgErr, setImgErr] = useState(false)
-  const hasImg = !!thumb && !imgErr
-
-  return (
-    <div className={`${s.histRow} ${isIn ? s.histIn : s.histOut}`}>
-      {isIn && (
-        <div
-          className={`${s.histThumb} ${hasImg && onImgClick ? s.histThumbClick : ''}`}
-          onClick={hasImg && onImgClick ? onImgClick : undefined}
-        >
-          {thumb && !imgErr
-            ? <img src={thumb} alt="N1" className={s.histThumbImg} onError={() => setImgErr(true)} />
-            : <div className={s.histThumbEmpty} />}
-        </div>
-      )}
-      <div className={s.histContent}>
-        <div className={s.histTop}>
-          <span className={s.histDir}>{isIn ? '↓ Vào' : '↑ Ra'}</span>
-          <span className={s.histUser}>{e.user_name || '—'}</span>
-        </div>
-        <span className={s.histTime}>{fmtDatetime(e.event_time)}</span>
-      </div>
-    </div>
-  )
-})
-
-/* ── Drawer ───────────────────────────────────────────────────── */
-function Drawer({ room, onClose }) {
-  const [hist,    setHist]    = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [lbIdx,   setLbIdx]   = useState(null)
-
-  useEffect(() => {
-    if (!room) return
-    setHist(null)
-    setLbIdx(null)
-    setLoading(true)
-    getRoomHistory(room.room)
-      .then(r => setHist(r.data))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [room?.room])
-
-  if (!room) return null
-
-  const imgEvents = hist?.events.filter(e => e.direction === 'incoming' && e.event_id_n1) || []
+  const events   = data?.events ?? []
+  const inCount  = events.filter(e => e.direction === 'incoming').length
+  const outCount = events.filter(e => e.direction === 'outgoing').length
 
   return (
     <>
-      <div className={s.overlay} onClick={onClose} />
-      <aside className={s.drawer}>
+      <div className={s.overlay} onClick={() => { if (lb) setLb(null); else onClose(); }} />
+      <div className={s.drawer}>
         <div className={s.drawerHead}>
           <div className={s.drawerTitle}>
-            <span className={`${s.dot} ${s.dotLg} ${room.occupied ? s.dotOn : s.dotOff}`} />
-            {room.room}
+            <span className={`${s.dot} ${s.dotLg} ${occupied ? s.dotOn : s.dotOff}`} />
+            {room}
           </div>
-          <button className={s.closeBtn} onClick={onClose}>
-            <Icon name="x" size={14} />
-          </button>
+          <button className={s.closeBtn} onClick={onClose}><Icon name="x" size={14} /></button>
         </div>
 
         <div className={s.drawerBody}>
-          <div className={`${s.statusBanner} ${room.occupied ? s.bannerIn : s.bannerEmpty}`}>
-            {room.occupied ? '● Có người' : '○ Vắng'}
+          <div className={`${s.statusBanner} ${occupied ? s.bannerIn : s.bannerEmpty}`}>
+            {occupied ? 'Có người' : 'Vắng'}
           </div>
 
-          {room.last_event && (
-            <div className={s.lastEvent}>
-              <span className={s.leLabel}>Sự kiện gần nhất</span>
-              <span className={s.leVal}>{fmtDatetime(room.last_event)}</span>
-              {room.last_user && <span className={s.leUser}>{room.last_user}</span>}
+          <div className={s.histStats}>
+            <div className={s.hStat}>
+              <span className={s.hStatVal} style={{ color: 'var(--in)' }}>{inCount}</span>
+              <span className={s.hStatKey}>Lượt vào hôm nay</span>
             </div>
-          )}
+            <div className={s.hStat}>
+              <span className={s.hStatVal} style={{ color: 'var(--out)' }}>{outCount}</span>
+              <span className={s.hStatKey}>Lượt ra hôm nay</span>
+            </div>
+          </div>
+
+          <div className={s.histHead}>Logs từ 12:01 hôm nay</div>
 
           {loading ? (
-            <div className={s.center}><Spinner size={18} /></div>
-          ) : hist ? (
-            <>
-              <div className={s.histStats}>
-                <div className={s.hStat}>
-                  <span className={s.hStatVal} style={{ color: 'var(--in)' }}>{hist.total_in}</span>
-                  <span className={s.hStatKey}>Tổng vào</span>
-                </div>
-                <div className={s.hStat}>
-                  <span className={s.hStatVal} style={{ color: 'var(--out)' }}>{hist.total_out}</span>
-                  <span className={s.hStatKey}>Tổng ra</span>
-                </div>
-                <div className={s.hStat}>
-                  <span className={s.hStatVal}>{room.today_count}</span>
-                  <span className={s.hStatKey}>Hôm nay</span>
-                </div>
-              </div>
-
-              <div className={s.histHead}>Lịch sử ({hist.events.length} sự kiện)</div>
-              <div className={s.histList}>
-                {hist.events.length === 0 && (
-                  <div className={s.histEmpty}>Chưa có dữ liệu</div>
-                )}
-                {hist.events.map((e, i) => {
-                  const imgIdx = imgEvents.indexOf(e)
-                  return (
-                    <HistRow
-                      key={i}
-                      event={e}
-                      onImgClick={imgIdx >= 0 ? () => setLbIdx(imgIdx) : undefined}
-                    />
-                  )
-                })}
-              </div>
-            </>
-          ) : null}
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+              <Spinner size={18} />
+            </div>
+          ) : events.length === 0 ? (
+            <div className={s.histEmpty}>Không có sự kiện</div>
+          ) : (
+            <div className={s.histList}>
+              {events.map((ev, i) => {
+                const isIn = ev.direction === 'incoming'
+                const snap = snapUrl(ev.event_id_n1)
+                return (
+                  <div key={i} className={`${s.histRow} ${isIn ? s.histIn : s.histOut}`}>
+                    {snap ? (
+                      <div className={`${s.histThumb} ${s.histThumbClick}`}
+                        onClick={() => setLb({ events, idx: i })}>
+                        <img src={snap} alt="" className={s.histThumbImg} loading="lazy" />
+                      </div>
+                    ) : (
+                      <div className={s.histThumb}><div className={s.histThumbEmpty} /></div>
+                    )}
+                    <div className={s.histContent}>
+                      <div className={s.histTop}>
+                        <span className={s.histDir}>{isIn ? '↓ VÀO' : '↑ RA'}</span>
+                        <span className={s.histTime}>{fmtTime(ev.event_time)}</span>
+                      </div>
+                      <span className={s.histUser}>{ev.user_name || '—'}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
-      </aside>
+      </div>
 
-      {lbIdx != null && imgEvents.length > 0 && (
-        <RoomLightbox
-          events={imgEvents}
-          idx={lbIdx}
-          onClose={() => setLbIdx(null)}
-          onNav={setLbIdx}
-        />
-      )}
+      {lb && (() => {
+        const ev   = lb.events[lb.idx]
+        const snap = snapUrl(ev.event_id_n1)
+        return (
+          <div className={s.lbOverlay} onClick={() => setLb(null)}>
+            {snap
+              ? <img src={snap} alt="" className={s.lbImg} onClick={e => e.stopPropagation()} />
+              : <div className={s.lbNoSig}>NO SIGNAL</div>}
+            <span className={s.lbCamLabel}>N1</span>
+            <button className={s.lbClose} onClick={() => setLb(null)}><Icon name="x" size={16} /></button>
+            <button className={`${s.lbNav} ${s.lbNavLeft}`} disabled={lb.idx === 0}
+              onClick={e => { e.stopPropagation(); setLb(p => ({ ...p, idx: p.idx - 1 })) }}>
+              <Icon name="chevLeft" size={18} />
+            </button>
+            <button className={`${s.lbNav} ${s.lbNavRight}`} disabled={lb.idx === lb.events.length - 1}
+              onClick={e => { e.stopPropagation(); setLb(p => ({ ...p, idx: p.idx + 1 })) }}>
+              <Icon name="chevron" size={18} />
+            </button>
+            <div className={s.lbMeta}>
+              <span className={s.lbDirIn}>{room}</span>
+              <span className={s.lbName}>{ev.user_name || '—'}</span>
+              <span className={s.lbTime}>{fmtTime(ev.event_time)}</span>
+              <span className={s.lbCounter}>{lb.idx + 1} / {lb.events.length}</span>
+            </div>
+          </div>
+        )
+      })()}
     </>
   )
 }
 
-/* ── Main ─────────────────────────────────────────────────────── */
 export default function Rooms() {
-  const [rooms,     setRooms]     = useState([])
-  const [loading,   setLoading]   = useState(true)
-  const [selected,  setSelected]  = useState(null)
-  const [updatedAt, setUpdatedAt] = useState(null)
+  const [roomMap, setRoomMap] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [occupied, setOccupied] = useState(0)
+  const [drawer, setDrawer]   = useState(null)
 
-  const load = useCallback(() => {
+  function load() {
+    setLoading(true)
     getRoomStatus()
-      .then(r => { setRooms(r.data); setUpdatedAt(new Date()) })
-      .catch(() => {})
+      .then(r => {
+        const map = {}
+        let occ = 0
+        r.data.forEach(d => { map[d.room] = d; if (d.occupied) occ++ })
+        setRoomMap(map)
+        setOccupied(occ)
+      })
       .finally(() => setLoading(false))
-  }, [])
+  }
 
-  useEffect(() => {
-    load()
-    const t = setInterval(load, 60_000)
-    return () => clearInterval(t)
-  }, [load])
+  useEffect(() => { load() }, [])
 
-  const roomMap = {}
-  rooms.forEach(r => { roomMap[r.room] = r })
-  const occupiedCount = rooms.filter(r => r.occupied).length
-
-  if (loading) return (
-    <div className={s.center}><Spinner size={24} /></div>
-  )
+  const total = Object.keys(roomMap).length
 
   return (
     <div className={s.page}>
       <div className={s.pageHead}>
         <div>
-          <h1 className={s.pageTitle}>Trạng thái phòng</h1>
-          <span className={s.pageSub}>
-            {occupiedCount}/{rooms.length} phòng có người
-            {updatedAt && ` · cập nhật ${timeAgo(updatedAt.toISOString())}`}
-          </span>
+          <div className={s.pageTitle}>Trạng thái phòng</div>
+          <div className={s.pageSub}>
+            {loading ? 'Đang tải…' : `${occupied}/${total} phòng có người · click phòng để xem logs`}
+          </div>
         </div>
-        <button className={s.refreshBtn} onClick={load}>
-          <Icon name="refresh" size={13} />
-          Làm mới
+        <button className={s.refreshBtn} onClick={load} disabled={loading}>
+          <Icon name="refresh" size={12} /> Làm mới
         </button>
       </div>
 
-      <div className={s.summary}>
-        <div className={s.sumItem}>
-          <span className={s.sumVal} style={{ color: 'var(--in)' }}>{occupiedCount}</span>
-          <span className={s.sumKey}>Có người</span>
-        </div>
-        <div className={s.sumDiv} />
-        <div className={s.sumItem}>
-          <span className={s.sumVal}>{rooms.length - occupiedCount}</span>
-          <span className={s.sumKey}>Vắng</span>
-        </div>
-      </div>
+      {loading ? (
+        <div className={s.center}><Spinner size={22} /></div>
+      ) : (
+        <>
+          <div className={s.summary}>
+            <div className={s.sumItem}>
+              <span className={s.sumVal} style={{ color: 'var(--in)' }}>{occupied}</span>
+              <span className={s.sumKey}>Có người</span>
+            </div>
+            <div className={s.sumDiv} />
+            <div className={s.sumItem}>
+              <span className={s.sumVal}>{total - occupied}</span>
+              <span className={s.sumKey}>Vắng</span>
+            </div>
+          </div>
 
-      {/* 6-column grid: rows x02 (top) and x01 (bottom) */}
-      <div className={s.roomGrid}>
-        <div />
-        {FLOORS.map(f => (
-          <div key={f} className={s.floorHdr}>Tầng {f}</div>
-        ))}
+          <div className={s.roomGrid}>
+            <div />
+            {FLOORS.map(f => <div key={f} className={s.floorHdr}>TẦNG {f}</div>)}
+            {['02', '01'].map(line => (
+              <div key={line} style={{ display: 'contents' }}>
+                <div className={s.rowLbl}>{line}</div>
+                {FLOORS.map(f => {
+                  const room = `P.${f}${line}`
+                  const data = roomMap[room]
+                  const occ  = data?.occupied ?? false
+                  return data ? (
+                    <button
+                      key={f}
+                      className={`${s.card} ${occ ? s.cardOccupied : ''}`}
+                      onClick={() => setDrawer(room)}
+                    >
+                      <div className={s.cardTop}>
+                        <span className={`${s.dot} ${occ ? s.dotOn : s.dotOff}`} />
+                        <span className={s.roomNum}>{room}</span>
+                        {data.today_count > 0 && (
+                          <span className={s.todayBadge}>{data.today_count}</span>
+                        )}
+                      </div>
+                      <div className={s.cardStatus}>{occ ? 'Có người' : 'Vắng'}</div>
+                      <div className={s.cardMeta}>
+                        <span className={s.cardUser}>{data.last_user || '—'}</span>
+                        <span className={s.cardAgo}>{timeAgo(data.last_event)}</span>
+                      </div>
+                    </button>
+                  ) : (
+                    <div key={f} className={s.emptySlot} />
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
-        {/* Row x02 */}
-        <div className={s.rowLbl}>02</div>
-        {FLOORS.map(f => {
-          const room = roomMap[`P.${f}02`]
-          return room
-            ? <RoomCard key={`P.${f}02`} data={room} onClick={setSelected} />
-            : <div key={`e${f}02`} className={s.emptySlot} />
-        })}
-
-        {/* Row x01 */}
-        <div className={s.rowLbl}>01</div>
-        {FLOORS.map(f => {
-          const room = roomMap[`P.${f}01`]
-          return room
-            ? <RoomCard key={`P.${f}01`} data={room} onClick={setSelected} />
-            : <div key={`e${f}01`} className={s.emptySlot} />
-        })}
-      </div>
-
-      <Drawer room={selected} onClose={() => setSelected(null)} />
+      {drawer && (
+        <RoomDrawer
+          room={drawer}
+          occupied={roomMap[drawer]?.occupied ?? false}
+          onClose={() => setDrawer(null)}
+        />
+      )}
     </div>
   )
 }

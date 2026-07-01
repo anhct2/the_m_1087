@@ -11,33 +11,36 @@ ROOMS = [f"P.{f}0{r}" for f in range(2, 8) for r in range(1, 3)]
 
 @router.get("/status")
 def room_status(_=Depends(require_auth)):
+    """Trạng thái phòng: chỉ dựa trên events hôm nay.
+    occupied = sự kiện gần nhất hôm nay là incoming."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                WITH latest AS (
+                WITH today_latest AS (
                     SELECT DISTINCT ON (label)
                         label,
                         direction,
                         event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh' AS last_event,
                         user_name
-                    FROM gate_session_clips
-                    WHERE is_best_match = TRUE
-                      AND label ~ '^P\\.\\d{3}$'
+                    FROM gate_sessions_v2
+                    WHERE label ~ '^P\\.\\d{3}$'
+                      AND (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh' - INTERVAL '12 hours 1 minute')::date
+                          = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh' - INTERVAL '12 hours 1 minute')::date
                     ORDER BY label, event_time_vn DESC
                 ),
                 today_cnt AS (
                     SELECT label, COUNT(*) AS cnt
-                    FROM gate_session_clips
-                    WHERE is_best_match = TRUE
-                      AND label ~ '^P\\.\\d{3}$'
-                      AND (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = CURRENT_DATE
+                    FROM gate_sessions_v2
+                    WHERE label ~ '^P\\.\\d{3}$'
+                      AND (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh' - INTERVAL '12 hours 1 minute')::date
+                          = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh' - INTERVAL '12 hours 1 minute')::date
                     GROUP BY label
                 )
                 SELECT
-                    l.label, l.direction, l.last_event, l.user_name,
+                    tl.label, tl.direction, tl.last_event, tl.user_name,
                     COALESCE(tc.cnt, 0) AS today_count
-                FROM latest l
-                LEFT JOIN today_cnt tc ON tc.label = l.label
+                FROM today_latest tl
+                LEFT JOIN today_cnt tc ON tc.label = tl.label
             """)
             rows = {r["label"]: dict(r) for r in cur.fetchall()}
 
@@ -62,37 +65,39 @@ def room_monthly(
     month: int = Query(..., ge=1, le=12),
     _=Depends(require_auth),
 ):
-    """Trả về heatmap: mỗi phòng × mỗi ngày trong tháng → số lượt vào/ra."""
+    """Heatmap lịch phòng theo "ngày khách sạn":
+    Ngày D = khoảng 12:01 ngày D → 12:00 ngày D+1.
+    Công thức: hotel_day = (event_time - 12h01m)::date
+    """
     first_day = date(year, month, 1)
     last_day  = date(year, month, cal_mod.monthrange(year, month)[1])
-    next_day  = last_day + timedelta(days=1)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
                     label,
-                    (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS day,
-                    COUNT(*) FILTER (WHERE direction = 'incoming') AS in_count,
-                    COUNT(*) FILTER (WHERE direction = 'outgoing') AS out_count
-                FROM gate_session_clips
-                WHERE is_best_match = TRUE
+                    (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh'
+                        - INTERVAL '12 hours 1 minute')::date AS hotel_day,
+                    COUNT(*) AS ev_count
+                FROM gate_sessions_v2
+                WHERE direction = 'incoming'
                   AND label ~ '^P\\.\\d{3}$'
-                  AND (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= %(from_date)s
-                  AND (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date < %(to_date)s
-                GROUP BY label, day
-                ORDER BY label, day
-            """, {"from_date": first_day, "to_date": next_day})
+                  AND (event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh'
+                        - INTERVAL '12 hours 1 minute')::date
+                      BETWEEN %(first_day)s AND %(last_day)s
+                GROUP BY label, hotel_day
+                ORDER BY label, hotel_day
+            """, {"first_day": first_day, "last_day": last_day})
             rows = cur.fetchall()
 
-    # Build per-room dict
     room_map: dict[str, dict] = {r: {} for r in ROOMS}
     for row in rows:
         room = row["label"]
         if room in room_map:
-            room_map[room][row["day"].isoformat()] = {
-                "in": int(row["in_count"]),
-                "out": int(row["out_count"]),
+            room_map[room][row["hotel_day"].isoformat()] = {
+                "busy":  True,
+                "count": int(row["ev_count"]),
             }
 
     return {
@@ -134,10 +139,12 @@ def room_day(
                         ORDER BY x.match_score ASC
                         LIMIT 1
                     ) AS event_id_n1
-                FROM gate_session_clips g
-                WHERE g.is_best_match = TRUE
-                  AND g.label = %(room)s
-                  AND (g.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = %(day)s
+                FROM gate_sessions_v2 g
+                WHERE g.label = %(room)s
+                  AND (g.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                      >= %(day)s::date + INTERVAL '12 hours 1 minute'
+                  AND (g.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')
+                      <  %(day)s::date + INTERVAL '1 day 12 hours 1 minute'
                 ORDER BY g.event_time_vn
             """, {"room": room, "day": d})
             events = cur.fetchall()
@@ -179,9 +186,8 @@ def room_history(
                         ORDER BY x.match_score ASC
                         LIMIT 1
                     ) AS event_id_n1
-                FROM gate_session_clips g
-                WHERE g.is_best_match = TRUE
-                  AND g.label = %(room)s
+                FROM gate_sessions_v2 g
+                WHERE g.label = %(room)s
                 ORDER BY g.event_time_vn DESC
                 LIMIT %(limit)s
             """, {"room": room, "limit": limit})
@@ -191,8 +197,8 @@ def room_history(
                 SELECT
                     COUNT(*) FILTER (WHERE direction = 'incoming') AS total_in,
                     COUNT(*) FILTER (WHERE direction = 'outgoing') AS total_out
-                FROM gate_session_clips
-                WHERE is_best_match = TRUE AND label = %(room)s
+                FROM gate_sessions_v2
+                WHERE label = %(room)s
             """, {"room": room})
             totals = dict(cur.fetchone())
 
