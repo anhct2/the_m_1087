@@ -728,6 +728,11 @@ def _apply_manual_assignment(
         WHERE id = %(pid)s
     """, {"pid": profile_id})
 
+    # Gắn nhãn phòng lên chính gate_session_clips để HIỂN THỊ ở cả Gate Log và
+    # danh sách Phiên (cả hai đọc label từ đây). Đây là mục đích chính của gán
+    # tay: thống kê phòng nào ra/vào lúc nào + thêm dữ liệu huấn luyện.
+    _tag_gate_room(cur, door_id, direction, new_room or room_label)
+
     cur.execute("""
         INSERT INTO enroll.manual_assignments
             (door_id, direction, enroll_session_id, person_id, room_label, source, assigned_by)
@@ -736,6 +741,18 @@ def _apply_manual_assignment(
           "room": new_room or room_label or None, "src": source, "by": user})
 
     return profile_id
+
+
+def _tag_gate_room(cur, door_id: str, direction: str, room: str):
+    """Ghi nhãn phòng vào gate_session_clips (mapper/worker không ghi đè cột
+    label khi upsert nên nhãn thủ công này bền vững)."""
+    if not room:
+        return
+    cur.execute("""
+        UPDATE gate_session_clips
+        SET label = %(room)s
+        WHERE session_id::text = %(d)s AND direction = %(dir)s
+    """, {"room": room, "d": str(door_id), "dir": direction})
 
 
 @router.post("/sessions/{session_id}/assign")
@@ -1005,10 +1022,13 @@ def room_day_profiles(
 @router.post("/gate-sessions/{door_id}/assign-room")
 def assign_gate_session_room(door_id: str, body: dict, user: str = Depends(require_auth)):
     """
-    Gán 1 phòng cho session outgoing (Ra) mà chưa xác định được người.
-    Cập nhật room_label rồi đưa lại vào hàng đợi để worker enroll lại và
-    tự xác định người trong phòng đó (giống chiều incoming). Việc merge
-    người cụ thể để cho job xử lý.
+    Gán 1 phòng cho session (thường là chiều Ra) — mục đích: THỐNG KÊ phòng
+    nào ra/vào lúc nào + có thêm DỮ LIỆU HUẤN LUYỆN. Không đòi hỏi nhận diện
+    được người, không quan tâm chất lượng cao/thấp.
+      - Gắn nhãn phòng lên gate_session_clips.label để hiển thị ngay ở Gate
+        Log và danh sách Phiên.
+      - Ghi room_label vào enroll_sessions + đưa lại hàng đợi để worker enroll
+        lại lấy dữ liệu huấn luyện cho phòng đã biết (không bắt buộc thành công).
     """
     room = (body.get("known_room") or body.get("room") or "").strip()
     if not room:
@@ -1066,6 +1086,9 @@ def assign_gate_session_room(door_id: str, body: dict, user: str = Depends(requi
                         started_at = NULL, finished_at = NULL
             """, {"d": door_id, "u": str(unlock_id), "t": gate["event_time_vn"],
                   "r": room, "dir": gate["direction"]})
+
+            # Gắn nhãn phòng lên gate_session_clips → hiện ở Gate Log + Phiên
+            _tag_gate_room(cur, door_id, gate["direction"], room)
 
             cur.execute("""
                 INSERT INTO enroll.manual_assignments

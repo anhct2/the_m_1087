@@ -52,10 +52,10 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
         {s.enroll_room_label && <Badge kind="teal">phòng gán: {s.enroll_room_label}</Badge>}
       </div>
 
-      {/* Trạng thái sau khi gán phòng thủ công (chờ worker nhận diện lại) */}
-      {!isIn && s.enroll_room_label && !s.recognized_person_id && (
-        <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, border: '1px solid var(--am3)', background: 'var(--amb)', fontSize: 12, color: 'var(--am)' }}>
-          Đã gán phòng <strong>{s.enroll_room_label}</strong> · đang chờ worker enroll lại để xác định người trong phòng.
+      {/* Đã gán phòng thủ công — dùng cho thống kê & dữ liệu huấn luyện */}
+      {s.enroll_room_label && !s.recognized_person_id && (
+        <div style={{ marginBottom: 16, padding: '10px 12px', borderRadius: 9, border: '1px solid var(--te3)', background: 'var(--teb)', fontSize: 12, color: 'var(--te)' }}>
+          Đã gán phòng <strong>{s.enroll_room_label}</strong> (thủ công) — dùng để thống kê ra/vào và thu thập dữ liệu huấn luyện. Không cần nhận diện được người / chất lượng thấp vẫn ổn.
         </div>
       )}
 

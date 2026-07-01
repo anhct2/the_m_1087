@@ -277,7 +277,7 @@ export default function GateLog() {
           date={toDateInput(se.event_time_local)}
           defaultRoom={se.label}
           onClose={() => setAssignOut(false)}
-          onAssigned={() => { setAssignOut(false); load(offset) }}
+          onAssigned={() => { setAssignOut(false); focusAppliedRef.current = false; load(offset) }}
         />
       )}
     </div>
