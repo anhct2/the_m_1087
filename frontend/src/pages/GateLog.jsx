@@ -215,8 +215,8 @@ export default function GateLog() {
                       >
                         {thumbUrl && <img src={thumbUrl} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
                         {!cam.eventId && <div style={{ position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, oklch(1 0 0 / 0.03) 0px, transparent 2px, transparent 4px)' }} />}
-                        {(clip?.clip_finalized || playSrc) && cam.eventId && (
-                          <button onClick={e => { e.stopPropagation(); setClipPlay({ src: playSrc, caption: `${se.user_name || 'Unknown'} · ${cam.label}` }) }} style={{ position: 'absolute', width: 46, height: 46, borderRadius: '50%', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, cursor: 'pointer' }}>
+                        {cam.eventId && (
+                          <button onClick={e => { e.stopPropagation(); setClipPlay({ src: clip?.clip_url || playSrc, caption: `${se.user_name || 'Unknown'} · ${cam.label}` }) }} style={{ position: 'absolute', width: 46, height: 46, borderRadius: '50%', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, cursor: 'pointer' }}>
                             <Icon name="play" size={18} style={{ color: 'oklch(0.98 0 0)' }} />
                           </button>
                         )}
