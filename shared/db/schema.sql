@@ -1,5 +1,5 @@
 -- DB Schema Dump: m1087
--- Generated   : 2026-07-01 10:42:25
+-- Generated   : 2026-07-01 18:03:37
 -- Schemas     : public, enroll
 -- NOTE: DDL only — no data
 
@@ -48,7 +48,7 @@ CREATE TABLE "public"."gate_events" (
     "inserted_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 2,028
+-- rows: 2,070
 
 -- public.gate_session_clips
 CREATE TABLE "public"."gate_session_clips" (
@@ -84,7 +84,7 @@ CREATE TABLE "public"."gate_session_clips" (
     "manual_reviewed_at" TIMESTAMP WITH TIME ZONE,
     PRIMARY KEY ("id")
 );
--- rows: 4,398
+-- rows: 4,478
 
 -- public.mapping_runs
 CREATE TABLE "public"."mapping_runs" (
@@ -98,7 +98,7 @@ CREATE TABLE "public"."mapping_runs" (
     "notes" TEXT,
     PRIMARY KEY ("id")
 );
--- rows: 3,541
+-- rows: 3,630
 
 -- public.poll_state
 CREATE TABLE "public"."poll_state" (
@@ -141,7 +141,7 @@ CREATE TABLE "public"."scrape_runs" (
     "tomorrow_available" BOOLEAN,
     PRIMARY KEY ("id")
 );
--- rows: 84
+-- rows: 96
 
 -- public.unlock_map
 CREATE TABLE "public"."unlock_map" (
@@ -230,7 +230,17 @@ CREATE TABLE "enroll"."camera_clip_results" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 991
+-- rows: 1,069
+
+-- enroll.duplicate_dismissals
+CREATE TABLE "enroll"."duplicate_dismissals" (
+    "id" BIGINT DEFAULT nextval('enroll.duplicate_dismissals_id_seq'::regclass) NOT NULL,
+    "profile_id_a" UUID NOT NULL,
+    "profile_id_b" UUID NOT NULL,
+    "dismissed_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    PRIMARY KEY ("id")
+);
+-- rows: 0
 
 -- enroll.enroll_sessions
 CREATE TABLE "enroll"."enroll_sessions" (
@@ -259,7 +269,7 @@ CREATE TABLE "enroll"."enroll_sessions" (
     "recognition_sim" DOUBLE PRECISION,
     PRIMARY KEY ("id")
 );
--- rows: 577
+-- rows: 592
 
 -- enroll.job_queue
 CREATE TABLE "enroll"."job_queue" (
@@ -283,7 +293,22 @@ CREATE TABLE "enroll"."job_queue" (
     "direction" TEXT DEFAULT 'incoming'::text NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 577
+-- rows: 593
+
+-- enroll.manual_assignments
+CREATE TABLE "enroll"."manual_assignments" (
+    "id" BIGINT DEFAULT nextval('enroll.manual_assignments_id_seq'::regclass) NOT NULL,
+    "door_id" TEXT NOT NULL,
+    "direction" TEXT NOT NULL,
+    "enroll_session_id" UUID,
+    "person_id" UUID,
+    "room_label" TEXT,
+    "source" TEXT DEFAULT 'enroll'::text NOT NULL,
+    "assigned_by" TEXT,
+    "assigned_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    PRIMARY KEY ("id")
+);
+-- rows: 13
 
 -- enroll.person_profiles
 CREATE TABLE "enroll"."person_profiles" (
@@ -308,7 +333,7 @@ CREATE TABLE "enroll"."person_profiles" (
     "is_active" BOOLEAN DEFAULT true NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 186
+-- rows: 208
 
 -- enroll.person_session_map
 CREATE TABLE "enroll"."person_session_map" (
@@ -319,7 +344,7 @@ CREATE TABLE "enroll"."person_session_map" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("person_id", "enroll_session_id")
 );
--- rows: 268
+-- rows: 308
 
 -- enroll.room_stays
 CREATE TABLE "enroll"."room_stays" (
@@ -337,7 +362,7 @@ CREATE TABLE "enroll"."room_stays" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
     PRIMARY KEY ("id")
 );
--- rows: 186
+-- rows: 209
 
 -- enroll.worker_heartbeat
 CREATE TABLE "enroll"."worker_heartbeat" (
@@ -592,6 +617,48 @@ SELECT r.id AS room_id,
 --  VIEWS — schema: enroll
 -- ============================================================
 
+CREATE OR REPLACE VIEW "enroll"."v_gate_sessions" AS
+SELECT b.session_id::text AS door_id,
+    b.unlock_id::text AS gate_unlock_id,
+    b.event_time_vn,
+    b.direction,
+    b.label AS room_label,
+    b.user_name AS gate_user_name,
+    b.method AS gate_method,
+    b.frigate_event_id AS snap_event_id,
+    b.match_score,
+    es.id AS enroll_session_id,
+    es.job_id,
+    es.unlock_id AS enroll_unlock_id,
+    es.status AS enroll_status,
+    es.person_count,
+    es.persons_enrolled,
+    es.recognized_person_id,
+    es.recognition_sim,
+    es.overall_quality,
+    es.best_face_score,
+    es.stopped_at_cam,
+    es.used_video,
+    es.total_ms,
+    es.error_msg,
+    es.warnings,
+    es.created_at AS enroll_created_at,
+    pp.display_name AS recognized_name,
+    pp.known_room AS recognized_room,
+    pp.gender AS recognized_gender,
+    jq.id AS pending_job_id,
+    jq.status AS job_status,
+        CASE
+            WHEN es.id IS NOT NULL THEN es.status
+            WHEN jq.id IS NOT NULL THEN 'queued'::text
+            ELSE 'not_queued'::text
+        END AS effective_status
+   FROM gate_session_clips b
+     LEFT JOIN enroll.enroll_sessions es ON es.door_id = b.session_id::text AND es.direction = b.direction
+     LEFT JOIN enroll.person_profiles pp ON pp.id = es.recognized_person_id
+     LEFT JOIN enroll.job_queue jq ON jq.door_id = b.session_id::text AND jq.direction = b.direction AND es.id IS NULL
+  WHERE b.is_best_match = true;;
+
 CREATE OR REPLACE VIEW "enroll"."v_occupancy" AS
 SELECT rs.room_id,
     rs.person_id,
@@ -639,7 +706,7 @@ SELECT es.id,
     es.warnings,
     es.created_at,
     gs.user_name,
-    gs.method,
+    gs.method::character varying AS method,
     pp.display_name AS recognized_name,
     pp.known_room AS recognized_room,
     pp.gender AS recognized_gender,
@@ -649,9 +716,11 @@ SELECT es.id,
              JOIN enroll.camera_clip_results ccr2 ON ccr2.enroll_session_id = psm2.enroll_session_id
           WHERE psm2.person_id = pp.id AND ccr2.frigate_event_id IS NOT NULL
           ORDER BY ccr2.stopped_here DESC, ccr2.confidence DESC NULLS LAST
-         LIMIT 1) AS recognized_face_event_id
+         LIMIT 1) AS recognized_face_event_id,
+    es.door_id,
+    es.unlock_id
    FROM enroll.enroll_sessions es
-     LEFT JOIN gate_sessions gs ON gs.door_id::text = es.door_id AND gs.unlock_id::text = es.unlock_id
+     LEFT JOIN gate_sessions_v2 gs ON gs.door_id::text = es.door_id AND gs.direction = es.direction
      LEFT JOIN enroll.person_profiles pp ON pp.id = es.recognized_person_id;;
 
 -- ============================================================
@@ -669,6 +738,12 @@ CREATE INDEX idx_es_status ON enroll.enroll_sessions USING btree (status, create
 
 -- enroll.job_queue
 CREATE INDEX idx_jq_poll ON enroll.job_queue USING btree (status, scheduled_at) WHERE (status = ANY (ARRAY['pending'::text, 'failed'::text]));
+
+-- enroll.manual_assignments
+CREATE INDEX idx_manual_assignments_door ON enroll.manual_assignments USING btree (door_id, direction);
+
+-- enroll.manual_assignments
+CREATE INDEX idx_manual_assignments_person ON enroll.manual_assignments USING btree (person_id, assigned_at DESC);
 
 -- enroll.person_profiles
 CREATE INDEX idx_pp_face_ivf ON enroll.person_profiles USING ivfflat (face_embedding vector_cosine_ops) WITH (lists='100');
@@ -1729,4 +1804,4 @@ CREATE OR REPLACE FUNCTION public.vector_typmod_in(cstring[])
  IMMUTABLE PARALLEL SAFE STRICT
 AS '$libdir/vector', $function$vector_typmod_in$function$;
 
--- End of dump — 2026-07-01 10:42:25
+-- End of dump — 2026-07-01 18:03:37
