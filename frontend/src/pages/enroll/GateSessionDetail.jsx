@@ -1,19 +1,36 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Card, Badge, Icon, SimBar, Avatar, Btn, Spinner, Empty } from '../../components/UI'
+import { Card, Badge, Icon, SimBar, Avatar, Btn, Loading, Empty, DirText } from '../../components/UI'
 import { OutgoingAssignModal } from '../../components/OutgoingAssignModal'
 import { Lightbox } from '../../components/Lightbox'
 import { ClipPlayer } from '../../components/ClipPlayer'
-import { STATUS, CONF, CAM_COLORS } from '../enrollData'
+import { CAM_COLORS } from '../enrollData'
+import { StatusBadge, ConfBadge } from './EnrollShell'
 import { getGateSessionById, retrySession } from '../../api/client'
 import { fmtTime, fmtShortDate, snapUrl, clipUrl } from '../../utils'
+
+/* Thumbnail ảnh 1 camera: ảnh + nút play clip + nhãn cam (+STOP nếu dừng ở đây).
+   Dùng chung cho clip enroll lẫn clip Gate Log thô để 2 khối hiển thị y nhau. */
+function CamThumb({ eventId, camera, clip, stoppedHere, onSnap, onClip }) {
+  return (
+    <div onClick={() => eventId && onSnap()} style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 9, overflow: 'hidden', border: `1px solid ${stoppedHere ? 'var(--in3)' : 'var(--ln)'}`, background: `linear-gradient(135deg, ${CAM_COLORS[camera] || 'oklch(0.28 0.02 255)'}, oklch(0.15 0.01 255))`, cursor: eventId ? 'zoom-in' : 'default' }}>
+      {eventId && <img src={snapUrl(eventId)} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
+      {eventId && (
+        <button onClick={e => { e.stopPropagation(); onClip(clip || clipUrl(eventId), camera) }} style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+          <Icon name="play" size={16} style={{ color: 'oklch(0.98 0 0)' }} />
+        </button>
+      )}
+      <span style={{ position: 'absolute', top: 8, left: 9, fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 600, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.4)', padding: '1px 4px', borderRadius: 3 }}>{camera}</span>
+      {stoppedHere && <span style={{ position: 'absolute', bottom: 6, right: 8, fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--in)', background: 'oklch(0 0 0 / 0.5)', padding: '1px 4px', borderRadius: 3 }}>STOP</span>}
+    </div>
+  )
+}
 
 /**
  * Chi tiết 1 phiên (khoá bằng door_id, dùng chung với Gate Log). Có thể chưa
  * có enroll_session (chưa xử lý) — vẫn xem clip + gán phòng (chỉ chiều Ra).
  */
 function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
-  const [sk, sl] = STATUS[s.effective_status] ?? ['dim', s.effective_status]
   const isIn = s.direction === 'incoming'
   const cams = (s.camera_clips ?? []).slice().sort((a, b) => a.camera_order - b.camera_order)
   const gateClips = s.gate_clips ?? []
@@ -36,7 +53,8 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 17, fontWeight: 600 }}>{who}</div>
           <div style={{ fontSize: 12, color: 'var(--tlo)', marginTop: 3, fontFamily: 'var(--mono)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span>{isIn ? '↓ Vào' : '↑ Ra'} · {fmtTime(s.event_time_vn)} · {fmtShortDate(s.event_time_vn)}</span>
+            <DirText dir={s.direction} size={12} />
+            <span>{fmtTime(s.event_time_vn)} · {fmtShortDate(s.event_time_vn)}</span>
             <Badge kind="teal">{s.room_label}</Badge>
           </div>
         </div>
@@ -46,7 +64,7 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        <Badge kind={sk}>{sl}</Badge>
+        <StatusBadge status={s.effective_status} />
         <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>door_id #{s.door_id}</span>
         {s.gate_method && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>· {s.gate_method}</span>}
         {s.enroll_room_label && <Badge kind="teal">phòng gán: {s.enroll_room_label}</Badge>}
@@ -78,20 +96,17 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '1px', color: 'var(--txl)', textTransform: 'uppercase', marginBottom: 10 }}>Người nhận diện ({persons.length})</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {persons.map(p => {
-              const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', 'unknown']
-              return (
-                <Link key={p.id} to={`/enroll/profiles/${p.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 11px', borderRadius: 10, border: '1px solid var(--ln)', textDecoration: 'none', background: 'var(--bg2)' }}>
-                  <Avatar gender={p.gender} size={40} src={snapUrl(p.face_event_id)} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--thi)' }}>{p.display_name || 'Chưa đặt tên'}</div>
-                    <div style={{ fontSize: 11, color: 'var(--tlo)' }}>{p.known_room || '—'} · {p.is_new ? 'mới' : 'đã có'}</div>
-                  </div>
-                  <Badge kind={ck}>{cl}</Badge>
-                  <Icon name="chevron" size={14} style={{ color: 'var(--tlo)' }} />
-                </Link>
-              )
-            })}
+            {persons.map(p => (
+              <Link key={p.id} to={`/enroll/profiles/${p.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 11px', borderRadius: 10, border: '1px solid var(--ln)', textDecoration: 'none', background: 'var(--bg2)' }}>
+                <Avatar gender={p.gender} size={40} src={snapUrl(p.face_event_id)} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--thi)' }}>{p.display_name || 'Chưa đặt tên'}</div>
+                  <div style={{ fontSize: 11, color: 'var(--tlo)' }}>{p.known_room || '—'} · {p.is_new ? 'mới' : 'đã có'}</div>
+                </div>
+                <ConfBadge level={p.confidence_lvl} />
+                <Icon name="chevron" size={14} style={{ color: 'var(--tlo)' }} />
+              </Link>
+            ))}
           </div>
         </div>
       )}
@@ -103,16 +118,12 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px,1fr))', gap: 10, marginBottom: 20 }}>
             {cams.map((cam, ci) => (
               <div key={ci}>
-                <div onClick={() => cam.frigate_event_id && onSnap(snapItems, snapItems.findIndex(x => x.eventId === cam.frigate_event_id))} style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 9, overflow: 'hidden', border: `1px solid ${cam.stopped_here ? 'var(--in3)' : 'var(--ln)'}`, background: `linear-gradient(135deg, ${CAM_COLORS[cam.camera_id] || 'oklch(0.28 0.02 255)'}, oklch(0.15 0.01 255))`, cursor: cam.frigate_event_id ? 'zoom-in' : 'default' }}>
-                  {cam.frigate_event_id && <img src={snapUrl(cam.frigate_event_id)} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
-                  {cam.frigate_event_id && (
-                    <button onClick={e => { e.stopPropagation(); onClip(cam.clip_url || clipUrl(cam.frigate_event_id), `${cam.camera_id}`) }} style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                      <Icon name="play" size={16} style={{ color: 'oklch(0.98 0 0)' }} />
-                    </button>
-                  )}
-                  <span style={{ position: 'absolute', top: 8, left: 9, fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 600, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.4)', padding: '1px 4px', borderRadius: 3 }}>{cam.camera_id}</span>
-                  {cam.stopped_here && <span style={{ position: 'absolute', bottom: 6, right: 8, fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--in)', background: 'oklch(0 0 0 / 0.5)', padding: '1px 4px', borderRadius: 3 }}>STOP</span>}
-                </div>
+                <CamThumb
+                  eventId={cam.frigate_event_id} camera={cam.camera_id}
+                  clip={cam.clip_url} stoppedHere={cam.stopped_here}
+                  onSnap={() => onSnap(snapItems, snapItems.findIndex(x => x.eventId === cam.frigate_event_id))}
+                  onClip={onClip}
+                />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
                   <SimBar value={cam.confidence ?? 0} />
                   <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--tlo)' }}>{cam.confidence?.toFixed(2) ?? '—'}</span>
@@ -126,13 +137,11 @@ function GateSessionBody({ s, onAssignClick, onRetry, onSnap, onClip }) {
           <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '1px', color: 'var(--txl)', textTransform: 'uppercase', marginBottom: 10 }}>Clip Gate Log (chưa qua enroll)</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px,1fr))', gap: 10, marginBottom: 20 }}>
             {gateClips.filter(c => c.frigate_event_id).map((cam, ci) => (
-              <div key={ci} onClick={() => onSnap(snapItems, snapItems.findIndex(x => x.eventId === cam.frigate_event_id))} style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 9, overflow: 'hidden', border: '1px solid var(--ln)', cursor: 'zoom-in', background: `linear-gradient(135deg, ${CAM_COLORS[cam.camera] || 'oklch(0.28 0.02 255)'}, oklch(0.15 0.01 255))` }}>
-                <img src={snapUrl(cam.frigate_event_id)} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
-                <button onClick={e => { e.stopPropagation(); onClip(cam.clip_url || clipUrl(cam.frigate_event_id), cam.camera) }} style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'oklch(0 0 0 / 0.45)', border: '1px solid oklch(1 0 0 / 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                  <Icon name="play" size={16} style={{ color: 'oklch(0.98 0 0)' }} />
-                </button>
-                <span style={{ position: 'absolute', top: 8, left: 9, fontFamily: 'var(--mono)', fontSize: 10, fontWeight: 600, color: 'oklch(0.95 0.005 255)', background: 'oklch(0 0 0 / 0.4)', padding: '1px 4px', borderRadius: 3 }}>{cam.camera}</span>
-              </div>
+              <CamThumb key={ci}
+                eventId={cam.frigate_event_id} camera={cam.camera} clip={cam.clip_url}
+                onSnap={() => onSnap(snapItems, snapItems.findIndex(x => x.eventId === cam.frigate_event_id))}
+                onClip={onClip}
+              />
             ))}
           </div>
         </>
@@ -187,7 +196,7 @@ export function GateSessionDrawer({ doorId, onClose, onChanged }) {
           <button onClick={onClose} style={{ marginLeft: 'auto', width: 30, height: 30, borderRadius: 7, background: 'transparent', border: '1px solid var(--ln)', color: 'var(--tlo)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Icon name="x" size={14} /></button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: 20 }}>
-          {loading || !s ? <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={20} /></div>
+          {loading || !s ? <Loading />
             : <GateSessionBody s={s} onAssignClick={() => setAssigning(true)} onRetry={() => { load(); onChanged?.() }} onSnap={(items, index) => setLightbox({ items, index })} onClip={(src, cap) => setClip({ src, caption: cap })} />}
         </div>
       </div>
@@ -213,7 +222,7 @@ export default function GateSessionPage() {
       <button onClick={() => navigate('/enroll/sessions')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', color: 'var(--tlo)', fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer', marginBottom: 16, padding: 0 }}>
         <Icon name="chevLeft" size={14} />Phiên nhận diện / <span style={{ color: 'var(--tmd)' }}>door #{doorId}</span>
       </button>
-      {loading ? <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}><Spinner size={24} /></div>
+      {loading ? <Loading pad={60} size={24} />
         : !s ? <Empty message="Không tìm thấy phiên này" />
         : (
           <Card pad={20} style={{ maxWidth: 680 }}>

@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Avatar, Badge, Spinner, Empty } from '../../components/UI'
+import { Avatar, Empty, Loading, Segmented, DirText } from '../../components/UI'
 import { RoomCheckboxFilter } from '../../components/RoomFilter'
 import { DateRangeFilter } from '../../components/DateRangeFilter'
 import { getStaysByGate, getStaysByProfile } from '../../api/client'
-import { STATUS } from '../enrollData'
 import { fmtTime, fmtShortDate, fmtRoomWindow, snapUrl } from '../../utils'
-import { SubHeader } from './EnrollShell'
+import { SubHeader, StatusBadge } from './EnrollShell'
 import { GateSessionDrawer } from './GateSessionDetail'
 
 /**
@@ -29,11 +28,7 @@ export default function EnrollOccupancy() {
         sub={`Theo cửa sổ phòng (12h trưa → 12h trưa hôm sau) · ${view === 'profile' ? 'ngày → phòng → hồ sơ' : 'ngày → phòng → gate log'}`}
         right={
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: 3 }}>
-              {[['profile', 'Theo hồ sơ'], ['gate', 'Theo Gate Log']].map(([v, l]) => (
-                <span key={v} onClick={() => setView(v)} style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', background: view === v ? 'var(--bg3)' : 'transparent', color: view === v ? 'var(--thi)' : 'var(--tlo)', fontWeight: view === v ? 500 : 400 }}>{l}</span>
-              ))}
-            </div>
+            <Segmented value={view} onChange={setView} options={[['profile', 'Theo hồ sơ'], ['gate', 'Theo Gate Log']]} />
             <RoomCheckboxFilter value={rooms} onChange={setRooms} />
             <DateRangeFilter value={range} onChange={setRange} />
           </div>
@@ -96,7 +91,7 @@ function ProfileView({ rooms, range, navigate }) {
   }, [rooms, range])
   useEffect(() => { load() }, [rooms, range])
 
-  if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+  if (loading) return <Loading />
   if (!rows.length) return <Empty message="Không có lượt lưu trú nào trong khoảng ngày" />
 
   const grouped = groupByDayRoom(rows, 'room_label')
@@ -147,7 +142,7 @@ function GateView({ rooms, range }) {
   }, [rooms, range])
   useEffect(() => { load() }, [rooms, range])
 
-  if (loading) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+  if (loading) return <Loading />
   if (!rows.length) return <Empty message="Không có lượt ra vào nào trong khoảng ngày" />
 
   const grouped = groupByDayRoom(rows, 'room_label')
@@ -161,23 +156,19 @@ function GateView({ rooms, range }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
               {dayRooms.map(({ room, rows: events }) => (
                 <RoomCard key={room} room={room} count={events.length} countLabel="lượt">
-                  {events.map(ev => {
-                    const isIn = ev.direction === 'incoming'
-                    const [sk, sl] = STATUS[ev.effective_status] ?? ['dim', ev.effective_status]
-                    return (
-                      <div key={`${ev.door_id}-${ev.direction}-${ev.event_time_vn}`} onClick={() => setDrawer(ev.door_id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderBottom: '1px solid var(--bg1)', cursor: 'pointer' }}>
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, minWidth: 42, color: isIn ? 'var(--in)' : 'var(--out)' }}>{isIn ? '↓ Vào' : '↑ Ra'}</span>
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tmd)', minWidth: 52 }}>{fmtTime(ev.event_time_vn)}</span>
-                        <Avatar gender={ev.recognized_gender} size={28} src={snapUrl(ev.snap_event_id)} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {ev.recognized_name || ev.gate_user_name || 'Chưa nhận diện'}
-                          </div>
+                  {events.map(ev => (
+                    <div key={`${ev.door_id}-${ev.direction}-${ev.event_time_vn}`} onClick={() => setDrawer(ev.door_id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderBottom: '1px solid var(--bg1)', cursor: 'pointer' }}>
+                      <DirText dir={ev.direction} style={{ minWidth: 42 }} />
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tmd)', minWidth: 52 }}>{fmtTime(ev.event_time_vn)}</span>
+                      <Avatar gender={ev.recognized_gender} size={28} src={snapUrl(ev.snap_event_id)} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {ev.recognized_name || ev.gate_user_name || 'Chưa nhận diện'}
                         </div>
-                        <Badge kind={sk}>{sl}</Badge>
                       </div>
-                    )
-                  })}
+                      <StatusBadge status={ev.effective_status} />
+                    </div>
+                  ))}
                 </RoomCard>
               ))}
             </div>

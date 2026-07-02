@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Badge, Avatar, SimBar, Spinner, Empty } from '../../components/UI'
+import { Badge, Avatar, SimBar, Loading, Empty } from '../../components/UI'
 import { RoomCheckboxFilter } from '../../components/RoomFilter'
 import { DateRangeFilter } from '../../components/DateRangeFilter'
-import { CONF } from '../enrollData'
+import { genderText } from '../enrollData'
 import { getEnrollProfiles } from '../../api/client'
 import { fmtShortDate, snapUrl } from '../../utils'
-import { SubHeader } from './EnrollShell'
+import { SubHeader, ConfBadge } from './EnrollShell'
 
 export default function EnrollProfilesList() {
   const navigate = useNavigate()
@@ -38,20 +38,19 @@ export default function EnrollProfilesList() {
       } />
 
       {loading && !items.length ? (
-        <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+        <Loading />
       ) : !items.length ? (
         <Empty message="Không có hồ sơ nào khớp bộ lọc" />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 14 }}>
           {items.map(p => {
-            const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', p.confidence_lvl ?? 'unknown']
             return (
               <div key={p.id} onClick={() => navigate(`/enroll/profiles/${p.id}`)} style={{ background: 'var(--bg1)', border: '1px solid var(--ln)', borderRadius: 12, padding: 18, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
                 <Avatar gender={p.gender} size={66} src={snapUrl(p.face_event_id)} />
                 <div style={{ fontSize: 13.5, fontWeight: 600, textAlign: 'center' }}>{p.display_name || 'Chưa đặt tên'}</div>
-                <div style={{ fontSize: 11, color: 'var(--tlo)' }}>{(p.gender === 'female' ? 'Nữ' : p.gender === 'male' ? 'Nam' : '—') + (p.age_estimate ? ` · ~${p.age_estimate}t` : '')}</div>
+                <div style={{ fontSize: 11, color: 'var(--tlo)' }}>{genderText(p.gender) + (p.age_estimate ? ` · ~${p.age_estimate}t` : '')}</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-                  <Badge kind={ck}>{cl}</Badge><Badge kind="teal">{p.known_room || '—'}</Badge>
+                  <ConfBadge level={p.confidence_lvl} /><Badge kind="teal">{p.known_room || '—'}</Badge>
                 </div>
                 <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
                   <span style={{ fontSize: 10, color: 'var(--txl)' }}>mặt</span>

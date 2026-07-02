@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Card, Badge, Btn, Icon, Empty, Spinner } from '../../components/UI'
-import { STATUS } from '../enrollData'
+import { Card, Btn, Icon, Empty, Loading, Segmented, DirText } from '../../components/UI'
 import { getEnrollJobs, retryJob, cancelJob } from '../../api/client'
 import { fmtTime, fmtShortDate, fmtDuration } from '../../utils'
-import { SubHeader, useEnrollBus } from './EnrollShell'
+import { SubHeader, StatusBadge, useEnrollBus } from './EnrollShell'
 
 const JOB_COLS = '70px 0.7fr 0.8fr 1.1fr 0.8fr 1fr 1.1fr'
 const FILTERS = [
@@ -49,17 +48,13 @@ export default function EnrollJobs() {
     <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
       <SubHeader title="Tác vụ" sub="Theo dõi job đang chạy / lỗi và chạy lại khi cần" right={
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: 3 }}>
-            {FILTERS.map(([v, l]) => (
-              <span key={v} onClick={() => setFilter(v)} style={{ fontSize: 11.5, padding: '5px 10px', borderRadius: 6, cursor: 'pointer', background: filter === v ? 'var(--bg3)' : 'transparent', color: filter === v ? 'var(--thi)' : 'var(--tlo)' }}>{l}</span>
-            ))}
-          </div>
+          <Segmented value={filter} onChange={setFilter} options={FILTERS} />
           <Btn variant="ghost" onClick={load}><Icon name="refresh" size={13} />Làm mới</Btn>
         </div>
       } />
 
       {loading ? (
-        <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+        <Loading />
       ) : !items.length ? (
         <Empty message="Không có tác vụ nào khớp bộ lọc" />
       ) : (
@@ -68,16 +63,15 @@ export default function EnrollJobs() {
             <div>Job ID</div><div>Chiều</div><div>Phòng</div><div>Trạng thái</div><div>Thời lượng</div><div>Lúc</div><div>Thao tác</div>
           </div>
           {items.map(j => {
-            const [sk, sl] = STATUS[j.status] ?? ['dim', j.status]
             const dur = fmtDuration(j.started_at, j.finished_at)
             const canRetry = j.status === 'failed' || j.status === 'skipped'
             const canCancel = j.status === 'pending'
             return (
               <div key={j.id} style={{ display: 'grid', gridTemplateColumns: JOB_COLS, gap: 10, alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--bg1)' }}>
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600, color: 'var(--tmd)' }}>#{j.id}</div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: j.direction === 'incoming' ? 'var(--in)' : 'var(--out)' }}>{j.direction === 'incoming' ? '↓ Vào' : '↑ Ra'}</div>
+                <div><DirText dir={j.direction} /></div>
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tmd)' }}>{j.room_label}</div>
-                <div><Badge kind={sk}>{sl}</Badge></div>
+                <div><StatusBadge status={j.status} /></div>
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tlo)' }}>{dur}</div>
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>{fmtShortDate(j.event_time_vn)} {fmtTime(j.event_time_vn)}</div>
                 <div style={{ display: 'flex', gap: 6 }}>

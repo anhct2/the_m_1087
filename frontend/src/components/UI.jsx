@@ -99,6 +99,16 @@ export function DirBadge({ dir }) {
   )
 }
 
+/* ── Direction dạng text mono (dùng trong bảng/danh sách) ──── */
+export function DirText({ dir, size = 11, style: sx }) {
+  const isIn = dir === 'incoming' || dir === 'in'
+  return (
+    <span style={{ fontFamily: 'var(--mono)', fontSize: size, color: isIn ? 'var(--in)' : 'var(--out)', whiteSpace: 'nowrap', ...sx }}>
+      {isIn ? '↓ Vào' : '↑ Ra'}
+    </span>
+  )
+}
+
 /* ── Similarity / quality bar ─────────────────────────────── */
 export function color4(v) {
   return v >= 0.7 ? 'var(--in)' : v >= 0.45 ? 'var(--am)' : 'var(--alm)'
@@ -156,6 +166,47 @@ export function Empty({ message = 'Không có dữ liệu' }) {
 /* ── Spinner ──────────────────────────────────────────────── */
 export function Spinner({ size = 16 }) {
   return <span style={{ width: size, height: size, display: 'inline-block', borderRadius: '50%', border: '2px solid var(--ln2)', borderTopColor: 'var(--in)', animation: 'tcsSpin .8s linear infinite' }} />
+}
+
+/* ── Khối loading giữa trang (spinner + padding chuẩn) ─────── */
+export function Loading({ pad = 40, size = 20 }) {
+  return (
+    <div style={{ padding: pad, display: 'flex', justifyContent: 'center' }}>
+      <Spinner size={size} />
+    </div>
+  )
+}
+
+/* ── Segmented toggle (pill switcher) ──────────────────────────
+   options: [[value, label]] · dot: hiện chấm màu theo value (map value→color) */
+export function Segmented({ value, onChange, options, dot }) {
+  return (
+    <div style={{ display: 'flex', background: 'var(--bg0)', border: '1px solid var(--ln)', borderRadius: 8, padding: 3 }}>
+      {options.map(([v, l]) => (
+        <span key={v} onClick={() => onChange(v)}
+          style={{ fontSize: 12, padding: '5px 12px', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap', background: value === v ? 'var(--bg3)' : 'transparent', color: value === v ? 'var(--thi)' : 'var(--tlo)', fontWeight: value === v ? 500 : 400 }}>
+          {dot?.[v] && <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: dot[v], marginRight: 6 }} />}
+          {l}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/* ── Footer phân trang chuẩn cho bảng ──────────────────────── */
+export function Pager({ offset, total, page, onPage, unit = 'phiên' }) {
+  const canPrev = offset > 0
+  const canNext = offset + page < total
+  const btn = can => ({ fontSize: 11, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--ln)', color: can ? 'var(--tmd)' : 'var(--txl)', cursor: can ? 'pointer' : 'default' })
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 16px', borderTop: '1px solid var(--bg2)' }}>
+      <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--txl)' }}>{total ? offset + 1 : 0}–{Math.min(offset + page, total)} / {total} {unit}</span>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <span onClick={() => canPrev && onPage(offset - page)} style={btn(canPrev)}>← Trước</span>
+        <span onClick={() => canNext && onPage(offset + page)} style={btn(canNext)}>Sau →</span>
+      </div>
+    </div>
+  )
 }
 
 /* ── Modal (portal) ───────────────────────────────────────── */

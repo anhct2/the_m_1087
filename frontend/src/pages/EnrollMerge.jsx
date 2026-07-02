@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Badge, Icon, Avatar, Btn, Modal, SimBar, Spinner } from '../components/UI'
-import { CONF } from './enrollData'
+import { Badge, Icon, Avatar, Btn, Modal, SimBar, Loading } from '../components/UI'
+import { genderText } from './enrollData'
+import { ConfBadge } from './enroll/EnrollShell'
 import { getDuplicateCluster, mergeProfiles, dismissCluster } from '../api/client'
 import { snapUrl, fmtDate } from '../utils'
 
@@ -38,7 +39,7 @@ export default function EnrollMerge() {
     navigate('/enroll/duplicates')
   }
 
-  if (loading) return <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div>
+  if (loading) return <Loading pad={60} size={24} />
   if (!cluster) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--txl)' }}>Không tìm thấy cluster</div>
 
   return (
@@ -67,7 +68,6 @@ export default function EnrollMerge() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14, marginBottom: 24 }}>
         {cluster.members.map((m, i) => {
           const isPrimary = i === primary
-          const [ck, cl] = CONF[m.confidence_lvl] ?? ['dim', m.confidence_lvl ?? 'unknown']
           return (
             <div key={m.id} onClick={() => setPrimary(i)} style={{ background: isPrimary ? 'oklch(0.2 0.04 152 / 0.4)' : 'var(--bg1)', border: `2px solid ${isPrimary ? 'var(--in)' : 'var(--ln)'}`, borderRadius: 13, padding: 18, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 12, position: 'relative', transition: 'border-color 0.15s' }}>
               {isPrimary && (
@@ -78,13 +78,12 @@ export default function EnrollMerge() {
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{m.display_name || '—'}</div>
                   <div style={{ fontSize: 11, color: 'var(--tlo)', marginTop: 4 }}>
-                    {m.gender === 'female' ? 'Nữ' : m.gender === 'male' ? 'Nam' : '—'}
-                    {m.age_estimate ? ` · ~${m.age_estimate}t` : ''}
+                    {genderText(m.gender)}{m.age_estimate ? ` · ~${m.age_estimate}t` : ''}
                   </div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <Badge kind={ck}>{cl}</Badge>
+                <ConfBadge level={m.confidence_lvl} />
                 {m.known_room && <Badge kind="teal">{m.known_room}</Badge>}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 7, fontSize: 11.5 }}>

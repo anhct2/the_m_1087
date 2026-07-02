@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Card, Badge, Icon, Avatar, Spinner, Empty } from '../../components/UI'
-import { STATUS } from '../enrollData'
+import { Card, Badge, Icon, Avatar, Loading, Pager, Empty, DirText } from '../../components/UI'
 import { getEnrollReview } from '../../api/client'
 import { fmtTime, fmtShortDate, snapUrl } from '../../utils'
 import { GateSessionDrawer } from './GateSessionDetail'
-import { SubHeader, useEnrollBus } from './EnrollShell'
+import { SubHeader, StatusBadge, useEnrollBus } from './EnrollShell'
 
 const REV_COLS = '44px 1.4fr 0.7fr 1.1fr 0.7fr 2fr 0.9fr'
 const PAGE_REV = 20
@@ -41,7 +40,7 @@ export default function EnrollReview() {
         </div>
       } />
       {loading && !items.length ? (
-        <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+        <Loading />
       ) : items.length === 0 ? (
         <Empty message="Không có phiên nào cần xử lý" />
       ) : (
@@ -50,8 +49,6 @@ export default function EnrollReview() {
             <div>Ảnh</div><div>Thời gian</div><div>Phòng</div><div>Trạng thái</div><div>Chiều</div><div>Lý do</div><div>Thao tác</div>
           </div>
           {items.map(r => {
-            const [sk, sl] = STATUS[r.status] ?? ['dim', r.status]
-            const isIn = r.direction === 'incoming'
             const multi = (r.person_count ?? 0) >= 3
             const reason = multi
               ? `${r.person_count} người trong 1 phiên — xác nhận số người trong phòng`
@@ -65,8 +62,8 @@ export default function EnrollReview() {
                 <Avatar gender={null} size={34} src={snapUrl(r.snap_event_id)} />
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--tmd)' }}>{fmtTime(r.event_time_vn)} · {fmtShortDate(r.event_time_vn)}</div>
                 <div><Badge kind="teal">{r.room_label}</Badge></div>
-                <div><Badge kind={sk}>{sl}</Badge></div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: isIn ? 'var(--in)' : 'var(--out)' }}>{isIn ? '↓ Vào' : '↑ Ra'}</div>
+                <div><StatusBadge status={r.status} /></div>
+                <div><DirText dir={r.direction} /></div>
                 <div style={{ fontSize: 11, color: multi ? 'var(--am)' : 'var(--txl)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason}</div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <span onClick={() => setDrawer(r.door_id)} style={{ fontSize: 10.5, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--ln2)', color: 'var(--in)', cursor: 'pointer' }}>Xem / Gán</span>
@@ -79,13 +76,7 @@ export default function EnrollReview() {
               </div>
             )
           })}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 16px', borderTop: '1px solid var(--bg2)' }}>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--txl)' }}>{offset + 1}–{Math.min(offset + PAGE_REV, total)} / {total}</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <span onClick={() => offset > 0 && load(offset - PAGE_REV)} style={{ fontSize: 11, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--ln)', color: offset > 0 ? 'var(--tmd)' : 'var(--txl)', cursor: offset > 0 ? 'pointer' : 'default' }}>← Trước</span>
-              <span onClick={() => offset + PAGE_REV < total && load(offset + PAGE_REV)} style={{ fontSize: 11, padding: '5px 11px', borderRadius: 6, border: '1px solid var(--ln2)', color: offset + PAGE_REV < total ? 'var(--tmd)' : 'var(--txl)', cursor: offset + PAGE_REV < total ? 'pointer' : 'default' }}>Sau →</span>
-            </div>
-          </div>
+          <Pager offset={offset} total={total} page={PAGE_REV} onPage={off => load(off)} />
         </Card>
       )}
 
