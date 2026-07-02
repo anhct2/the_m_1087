@@ -17,8 +17,13 @@ from logging.handlers import RotatingFileHandler
 from config import (
     POLL_INTERVAL_S, JOB_DELAY_S, OUTGOING_JOB_DELAY_S, MAX_CONCURRENT,
     STUCK_TIMEOUT_M, WORKER_ID, LOG_LEVEL, LOG_FILE,
+    MERGE_JOB_EVERY_TICKS, MERGE_LOOKBACK_DAYS,
+    MERGE_SIM_SAME_WINDOW, MERGE_SIM_CROSS_WINDOW,
 )
-from db import poll_new_gate_events, enqueue, claim_job, release_stuck, upsert_heartbeat
+from db import (
+    poll_new_gate_events, enqueue, claim_job, release_stuck,
+    upsert_heartbeat, merge_room_profiles,
+)
 from extractor import Extractor
 from pipeline import run_job, run_outgoing_job
 
@@ -60,6 +65,26 @@ def poll_and_enqueue():
                 log.info(f"Enqueued {direction} job #{jid} {ev['room_label']} @ {ev['event_time_vn']} delay={delay}s")
     except Exception as e:
         log.error(f"poll_and_enqueue error: {e}")
+
+
+def run_merge_job():
+    """Job định kỳ: gộp profile theo phòng + cụm cửa sổ thời gian.
+
+    1 người ở 1 phòng dài ngày → nhiều profile qua các lượt vào; gộp lại
+    làm 1 (logic + ngưỡng trong enroll.merge_room_profiles, phòng đổi khách
+    liên tục được bảo vệ bằng ngưỡng sim cao hơn khi khác cụm cửa sổ).
+    """
+    try:
+        merges = merge_room_profiles(
+            MERGE_LOOKBACK_DAYS, MERGE_SIM_SAME_WINDOW, MERGE_SIM_CROSS_WINDOW)
+        for m in merges:
+            log.info(f"Auto-merge profile {str(m['merged_id'])[:8]} → "
+                     f"{str(m['primary_id'])[:8]} room={m['room_label']} "
+                     f"sim={m['similarity']:.3f} gap={m['window_gap']}w")
+        if merges:
+            log.info(f"Merge job: gộp {len(merges)} cặp profile")
+    except Exception as e:
+        log.error(f"merge_room_profiles error: {e}")
 
 
 def run_one_job(job: dict):
@@ -148,6 +173,9 @@ def main():
                 if n: log.warning(f"Released {n} stuck jobs")
             except Exception as e:
                 log.error(f"release_stuck error: {e}")
+
+        if MERGE_JOB_EVERY_TICKS > 0 and tick % MERGE_JOB_EVERY_TICKS == 0:
+            run_merge_job()
 
         poll_and_enqueue()
         drain_queue()

@@ -61,3 +61,19 @@ export function toDateInput(d) {
   const dt = d instanceof Date ? d : new Date(d)
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
 }
+
+// "Cửa sổ phòng": 1 ngày phòng D = [D 12h trưa, D+1 12h trưa).
+// roomWindowDate(ts) → 'YYYY-MM-DD' của cửa sổ chứa ts (khớp enroll.room_window_date phía DB).
+export function roomWindowDate(isoStr) {
+  if (!isoStr) return ''
+  return toDateInput(new Date(new Date(isoStr).getTime() - 12 * 3600 * 1000))
+}
+
+// Nhãn hiển thị cho 1 cửa sổ phòng: '02/07' -> '12h trưa 02/07 → 12h trưa 03/07'
+export function fmtRoomWindow(dateStr) {
+  if (!dateStr) return '—'
+  const d = new Date(`${dateStr}T00:00:00`)
+  const n = new Date(d.getTime() + 86400000)
+  const f = x => `${String(x.getDate()).padStart(2, '0')}/${String(x.getMonth() + 1).padStart(2, '0')}`
+  return `12h trưa ${f(d)} → 12h trưa ${f(n)}`
+}

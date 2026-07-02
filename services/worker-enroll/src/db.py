@@ -398,9 +398,39 @@ def close_room_stay(person_id: str, exit_ts,
 
 
 def find_similar_profile(face_emb: List[float], room_label: str,
-                         threshold: float = 0.40) -> Optional[Tuple[str, float]]:
+                         threshold: float = 0.40,
+                         event_ts=None,
+                         cross_threshold: float = 0.75) -> Optional[Tuple[str, float]]:
+    """Tìm profile cùng phòng để merge khi enroll incoming.
+
+    Room-window aware: nếu profile chỉ xuất hiện ở CỤM CỬA SỔ PHÒNG khác
+    (12h trưa → 12h trưa, cách event > 1 cửa sổ) thì phòng có thể đã đổi
+    khách → đòi hỏi cross_threshold (cao hơn hẳn) mới merge, tránh gộp
+    khách mới vào profile khách cũ của cùng phòng.
+    """
     with get_conn() as conn:
         with conn.cursor() as cur:
+            if event_ts is not None:
+                cur.execute("""
+                    SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim,
+                           (enroll.room_window_date(%(ts)s::timestamptz)
+                                BETWEEN enroll.room_window_date(first_seen_ts) - 1
+                                    AND enroll.room_window_date(last_seen_ts) + 1
+                           ) AS same_cluster
+                    FROM enroll.person_profiles
+                    WHERE known_room=%(room)s AND face_embedding IS NOT NULL
+                      AND is_active=true
+                    ORDER BY face_embedding<=>%(emb)s::vector
+                    LIMIT 1
+                """, {"emb": face_emb, "room": room_label, "ts": event_ts})
+                row = cur.fetchone()
+                if row and (
+                    (row["same_cluster"] and row["sim"] >= threshold)
+                    or row["sim"] >= cross_threshold
+                ):
+                    return row["id"], float(row["sim"])
+                return None
+
             cur.execute("""
                 SELECT id, 1-(face_embedding<=>%(emb)s::vector) AS sim
                 FROM enroll.person_profiles
@@ -413,6 +443,26 @@ def find_similar_profile(face_emb: List[float], room_label: str,
             if row and row["sim"] >= threshold:
                 return row["id"], float(row["sim"])
             return None
+
+
+def merge_room_profiles(days: int = 7, sim_same: float = 0.55,
+                        sim_cross: float = 0.78, room: str = None) -> List[dict]:
+    """Job gộp profile theo phòng + cụm cửa sổ thời gian.
+
+    Logic nằm trong enroll.merge_room_profiles() (SQL, dùng chung với API):
+    1 người ở 1 phòng dài ngày → các profile trùng (sim >= sim_same, cửa sổ
+    giao/kề nhau) gộp làm 1; phòng đổi khách liên tục → khác cụm cửa sổ chỉ
+    gộp khi sim >= sim_cross.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM enroll.merge_room_profiles(%s, %s, %s, %s)",
+                (days, sim_same, sim_cross, room),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+        conn.commit()
+    return rows
 
 
 def _weighted_avg_emb(old_raw, count: int, new_emb: List[float]) -> List[float]:

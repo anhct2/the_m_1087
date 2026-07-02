@@ -8,7 +8,7 @@ import { Lightbox } from '../components/Lightbox'
 import { ClipPlayer } from '../components/ClipPlayer'
 import { OutgoingAssignModal } from '../components/OutgoingAssignModal'
 import { getSessions, getSession, getSessionClips } from '../api/client'
-import { fmtTime, fmtShortDate, timeAgo, snapUrl, clipUrl, toDateInput } from '../utils'
+import { fmtTime, fmtShortDate, timeAgo, snapUrl, clipUrl } from '../utils'
 
 const CAM_COLORS = { N1: 'oklch(0.32 0.03 255)', S1: 'oklch(0.30 0.04 200)', S2: 'oklch(0.33 0.03 152)' }
 const PAGE = 20
@@ -274,7 +274,7 @@ export default function GateLog() {
       {assignOut && se && (
         <OutgoingAssignModal
           doorId={se.session_id}
-          date={toDateInput(se.event_time_local)}
+          ts={se.event_time_local}
           defaultRoom={se.label}
           onClose={() => setAssignOut(false)}
           onAssigned={() => { setAssignOut(false); focusAppliedRef.current = false; load(offset) }}

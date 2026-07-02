@@ -6,7 +6,7 @@ import { Lightbox } from '../../components/Lightbox'
 import { ClipPlayer } from '../../components/ClipPlayer'
 import { STATUS, CONF, CAM_COLORS } from '../enrollData'
 import { getGateSessionById, retrySession } from '../../api/client'
-import { fmtTime, fmtShortDate, snapUrl, clipUrl, toDateInput } from '../../utils'
+import { fmtTime, fmtShortDate, snapUrl, clipUrl } from '../../utils'
 
 /**
  * Chi tiết 1 phiên (khoá bằng door_id, dùng chung với Gate Log). Có thể chưa
@@ -192,7 +192,7 @@ export function GateSessionDrawer({ doorId, onClose, onChanged }) {
         </div>
       </div>
       {assigning && s && (
-        <OutgoingAssignModal doorId={doorId} date={toDateInput(s.event_time_vn)} defaultRoom={s.room_label} onClose={() => setAssigning(false)} onAssigned={() => { setAssigning(false); load(); onChanged?.() }} />
+        <OutgoingAssignModal doorId={doorId} ts={s.event_time_vn} defaultRoom={s.room_label} onClose={() => setAssigning(false)} onAssigned={() => { setAssigning(false); load(); onChanged?.() }} />
       )}
       {lightbox && <Lightbox items={lightbox.items} index={lightbox.index} onIndex={i => setLightbox(lb => ({ ...lb, index: i }))} onClose={() => setLightbox(null)} />}
       {clip && <ClipPlayer src={clip.src} caption={clip.caption} onClose={() => setClip(null)} />}
@@ -221,7 +221,7 @@ export default function GateSessionPage() {
           </Card>
         )}
       {assigning && s && (
-        <OutgoingAssignModal doorId={doorId} date={toDateInput(s.event_time_vn)} defaultRoom={s.room_label} onClose={() => setAssigning(false)} onAssigned={load} />
+        <OutgoingAssignModal doorId={doorId} ts={s.event_time_vn} defaultRoom={s.room_label} onClose={() => setAssigning(false)} onAssigned={load} />
       )}
       {lightbox && <Lightbox items={lightbox.items} index={lightbox.index} onIndex={i => setLightbox(lb => ({ ...lb, index: i }))} onClose={() => setLightbox(null)} />}
       {clip && <ClipPlayer src={clip.src} caption={clip.caption} onClose={() => setClip(null)} />}

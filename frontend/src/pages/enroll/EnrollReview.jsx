@@ -29,7 +29,7 @@ export default function EnrollReview() {
 
   return (
     <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
-      <SubHeader title="Cần xử lý" sub="Phiên lỗi hoặc đã enroll nhưng chưa gắn được hồ sơ" right={
+      <SubHeader title="Cần xử lý" sub="Phiên lỗi, chưa gắn được hồ sơ, hoặc phát hiện 3+ người trong 1 phiên cần xác nhận" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {[7, 14, 30].map(d => (
             <span key={d} onClick={() => { setDays(d); load(0, d) }}
@@ -52,7 +52,10 @@ export default function EnrollReview() {
           {items.map(r => {
             const [sk, sl] = STATUS[r.status] ?? ['dim', r.status]
             const isIn = r.direction === 'incoming'
-            const reason = r.error_msg
+            const multi = (r.person_count ?? 0) >= 3
+            const reason = multi
+              ? `${r.person_count} người trong 1 phiên — xác nhận số người trong phòng`
+              : r.error_msg
               ? r.error_msg.slice(0, 60)
               : r.recognized_person_id == null
               ? 'enrolled nhưng không có profile'
@@ -64,7 +67,7 @@ export default function EnrollReview() {
                 <div><Badge kind="teal">{r.room_label}</Badge></div>
                 <div><Badge kind={sk}>{sl}</Badge></div>
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: isIn ? 'var(--in)' : 'var(--out)' }}>{isIn ? '↓ Vào' : '↑ Ra'}</div>
-                <div style={{ fontSize: 11, color: 'var(--txl)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason}</div>
+                <div style={{ fontSize: 11, color: multi ? 'var(--am)' : 'var(--txl)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reason}</div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <span onClick={() => setDrawer(r.door_id)} style={{ fontSize: 10.5, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--ln2)', color: 'var(--in)', cursor: 'pointer' }}>Xem / Gán</span>
                   {r.door_id && (

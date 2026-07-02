@@ -10,11 +10,12 @@ let roomCodesCache = null
  * Gán phòng thủ công cho session OUTGOING (Ra).
  * - Bắt buộc: chọn/nhập phòng.
  * - Tuỳ chọn: chọn đúng người trong danh sách đã enroll INCOMING của phòng đó
- *   trong NGÀY đó (không lục lịch sử). Nếu không chọn người → chỉ gán phòng,
+ *   trong cùng CỬA SỔ PHÒNG (12h trưa → 12h trưa hôm sau) — lượt ra 9h sáng
+ *   vẫn thấy khách vào chiều hôm trước. Nếu không chọn người → chỉ gán phòng,
  *   worker sẽ enroll lại và tự xác định người.
- * date: 'YYYY-MM-DD' của session (giờ VN).
+ * ts: event_time (ISO) của lượt Ra — BE dùng để xác định cửa sổ phòng.
  */
-export function OutgoingAssignModal({ doorId, date, defaultRoom = '', onAssigned, onClose }) {
+export function OutgoingAssignModal({ doorId, ts, defaultRoom = '', onAssigned, onClose }) {
   const [codes, setCodes]   = useState(roomCodesCache || [])
   const [room, setRoom]     = useState(defaultRoom)
   const [profiles, setProfiles] = useState([])
@@ -28,13 +29,13 @@ export function OutgoingAssignModal({ doorId, date, defaultRoom = '', onAssigned
   }, [])
 
   useEffect(() => {
-    if (!room || !date) { setProfiles([]); return }
+    if (!room || !ts) { setProfiles([]); return }
     setLoadingP(true)
-    getRoomDayProfiles(room, date)
+    getRoomDayProfiles(room, ts)
       .then(r => setProfiles(r.data))
       .catch(() => setProfiles([]))
       .finally(() => setLoadingP(false))
-  }, [room, date])
+  }, [room, ts])
 
   function run(promise) {
     setSaving(true); setError('')
@@ -64,11 +65,11 @@ export function OutgoingAssignModal({ doorId, date, defaultRoom = '', onAssigned
         {room && (
           <>
             <div style={{ fontSize: 11, color: 'var(--txl)', textTransform: 'uppercase', letterSpacing: '0.8px', fontFamily: 'var(--mono)', marginBottom: 8 }}>
-              Người đã vào {room} trong ngày (tuỳ chọn)
+              Người đã vào {room} trong cửa sổ phòng (tuỳ chọn)
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 190, overflowY: 'auto', marginBottom: 12 }}>
               {loadingP ? <div style={{ padding: 12, textAlign: 'center' }}><Spinner size={14} /></div>
-                : profiles.length === 0 ? <div style={{ fontSize: 11.5, color: 'var(--txl)', padding: '4px 2px' }}>Không có ai enroll incoming cho phòng này trong ngày — cứ gán phòng, worker sẽ tự xác định.</div>
+                : profiles.length === 0 ? <div style={{ fontSize: 11.5, color: 'var(--txl)', padding: '4px 2px' }}>Không có ai enroll incoming cho phòng này trong cửa sổ phòng — cứ gán phòng, worker sẽ tự xác định.</div>
                 : profiles.map(p => {
                   const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', 'unknown']
                   return (
