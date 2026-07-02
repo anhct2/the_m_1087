@@ -22,17 +22,11 @@ export const CONF = {
   unknown:         ['dim',   'chưa rõ'],
 }
 
-export const REASON = {
-  no_match:     ['amber', 'Không khớp'],
-  low_quality:  ['amber', 'Chất lượng thấp'],
-  no_detection: ['dim',   'Không phát hiện'],
-  ambiguous:    ['blue',  'Nhập nhằng'],
-}
-
 export const CAM_COLORS = {
   N1: 'oklch(0.32 0.03 255)',
   S1: 'oklch(0.30 0.04 200)',
   S2: 'oklch(0.33 0.03 152)',
 }
 
-export const simColor = s => s >= 80 ? 'var(--in)' : s >= 60 ? 'var(--am)' : 'var(--alm)'
+// Nhãn giới tính thống nhất giữa các màn (ProfilesList / Profile / Merge)
+export const genderText = g => g === 'female' ? 'Nữ' : g === 'male' ? 'Nam' : '—'

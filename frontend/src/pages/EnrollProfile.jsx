@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
-import { Card, Badge, Icon, SimBar, Avatar, Btn, Spinner } from '../components/UI'
+import { Card, Badge, Icon, SimBar, Avatar, Btn, Loading, DirText } from '../components/UI'
 import { Lightbox } from '../components/Lightbox'
 import { ClipPlayer } from '../components/ClipPlayer'
-import { CONF } from './enrollData'
+import { genderText } from './enrollData'
+import { ConfBadge } from './enroll/EnrollShell'
 import { getEnrollProfile, postReenroll } from '../api/client'
 import { fmtTime, fmtShortDate, fmtDate, snapUrl, clipUrl } from '../utils'
 
@@ -34,10 +35,9 @@ export default function EnrollProfile() {
       .finally(() => setLoading(false))
   }, [id])
 
-  if (loading) return <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div>
+  if (loading) return <Loading pad={60} size={24} />
   if (!p)      return <div style={{ padding: 40, textAlign: 'center', color: 'var(--txl)' }}>Không tìm thấy hồ sơ</div>
 
-  const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', p.confidence_lvl ?? 'unknown']
   const thumbSrc = snapUrl(p.face_event_id)
 
   const metrics = [
@@ -72,9 +72,9 @@ export default function EnrollProfile() {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.3px' }}>{p.display_name}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-            <Badge kind={ck}>{cl}</Badge>
+            <ConfBadge level={p.confidence_lvl} />
             <Badge kind="teal">{p.known_room || '—'}</Badge>
-            <Badge kind="dim">{p.gender === 'male' ? 'Nam' : p.gender === 'female' ? 'Nữ' : '—'}</Badge>
+            <Badge kind="dim">{genderText(p.gender)}</Badge>
             {p.age_estimate && <Badge kind="dim">~{p.age_estimate}t</Badge>}
             <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--txl)' }}>#{p.id}</span>
           </div>
@@ -169,13 +169,12 @@ export default function EnrollProfile() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {sessions.map((t) => {
                   const isGood = t.status === 'enrolled'
-                  const isIn = t.direction === 'incoming'
                   return (
                     <div key={t.id} style={{ display: 'flex', gap: 12, padding: '8px 6px', borderRadius: 8, alignItems: 'center' }}>
                       <Avatar gender={p.gender} size={30} src={snapUrl(t.snap_event_id)} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: isIn ? 'var(--in)' : 'var(--out)' }}>{isIn ? '↓ Vào' : '↑ Ra'}</span>
+                          <DirText dir={t.direction} />
                           <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--tmd)' }}>{fmtShortDate(t.event_time_vn)} {fmtTime(t.event_time_vn)}</span>
                           <Badge kind={isGood ? 'green' : 'amber'}>{t.room_label}</Badge>
                           {t.overall_quality > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--tlo)' }}>{Math.round(t.overall_quality * 100)}%</span>}

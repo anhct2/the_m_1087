@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Outlet, useOutletContext } from 'react-router-dom'
-import { Icon, Btn } from '../../components/UI'
+import { Icon, Btn, Badge } from '../../components/UI'
+import { STATUS, CONF } from '../enrollData'
 import { getEnrollSummary, getEnrollQueue, getWorkerStatus, postBackfill, postReleaseStuck, postMergeRoomProfiles } from '../../api/client'
 
 /**
@@ -127,6 +128,18 @@ export function EnrollOverview({ onRefresh }) {
       </div>
     </div>
   )
+}
+
+// Badge trạng thái phiên/job — mapping STATUS dùng chung mọi màn enroll
+export function StatusBadge({ status }) {
+  const [kind, label] = STATUS[status] ?? ['dim', status]
+  return <Badge kind={kind}>{label}</Badge>
+}
+
+// Badge mức độ tin cậy của profile — mapping CONF dùng chung
+export function ConfBadge({ level }) {
+  const [kind, label] = CONF[level] ?? ['dim', level ?? 'unknown']
+  return <Badge kind={kind}>{label}</Badge>
 }
 
 // Header đơn giản cho các màn con khác (tiêu đề + mô tả + chỗ để filter/actions)

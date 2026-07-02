@@ -12,6 +12,43 @@ from ..core.auth import require_auth
 router = APIRouter()
 
 
+# ── SQL fragments dùng chung (tránh lặp cùng 1 subquery ~10 chỗ) ──
+def _face_event_sql(person_expr: str) -> str:
+    """Subquery frigate_event_id ảnh đại diện tốt nhất của MỘT profile
+    (ưu tiên camera dừng chuỗi, rồi confidence). person_expr: cột uuid."""
+    return f"""(SELECT ccr_f.frigate_event_id
+        FROM enroll.person_session_map psm_f
+        JOIN enroll.camera_clip_results ccr_f
+          ON ccr_f.enroll_session_id = psm_f.enroll_session_id
+        WHERE psm_f.person_id = {person_expr}
+          AND ccr_f.frigate_event_id IS NOT NULL
+        ORDER BY ccr_f.stopped_here DESC, ccr_f.confidence DESC NULLS LAST
+        LIMIT 1)"""
+
+
+def _snap_event_sql(session_expr: str) -> str:
+    """Subquery frigate_event_id ảnh đại diện của MỘT enroll session."""
+    return f"""(SELECT ccr_s.frigate_event_id
+        FROM enroll.camera_clip_results ccr_s
+        WHERE ccr_s.enroll_session_id = {session_expr}
+          AND ccr_s.frigate_event_id IS NOT NULL
+        ORDER BY ccr_s.stopped_here DESC, ccr_s.confidence DESC NULLS LAST
+        LIMIT 1)"""
+
+
+# Cụm SET đưa 1 job về pending sạch — dùng chung cho backfill / retry /
+# assign-room / re-enroll để hành vi reset job luôn giống nhau.
+_JOB_RESET_SET = """
+    status        = 'pending',
+    attempt_count = 0,
+    scheduled_at  = now(),
+    last_error    = NULL,
+    locked_by     = NULL,
+    locked_at     = NULL,
+    started_at    = NULL,
+    finished_at   = NULL"""
+
+
 # ── Queue stats (cho metric cards) ─────────────────────────────
 @router.get("/stats/queue")
 def queue_stats(_=Depends(require_auth)):
@@ -96,12 +133,7 @@ def list_sessions(
                        vs.stopped_at_cam, vs.used_video, vs.total_ms,
                        vs.error_msg, vs.warnings, vs.created_at,
                        vs.user_name, vs.method,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.camera_clip_results ccr
-                        WHERE ccr.enroll_session_id = vs.id
-                          AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS snap_event_id
+                       {_snap_event_sql('vs.id')} AS snap_event_id
                 FROM enroll.v_sessions vs
                 WHERE {' AND '.join(filters)}
                 ORDER BY vs.event_time_vn DESC
@@ -143,14 +175,9 @@ def get_session_by_unlock(unlock_id: str, _=Depends(require_auth)):
 def get_session(session_id: str, _=Depends(require_auth)):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT vs.*,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.camera_clip_results ccr
-                        WHERE ccr.enroll_session_id = vs.id
-                          AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS snap_event_id
+                       {_snap_event_sql('vs.id')} AS snap_event_id
                 FROM enroll.v_sessions vs WHERE vs.id = %(sid)s
             """,
                 {"sid": session_id}
@@ -202,17 +229,10 @@ def search_profiles(
 ):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT id, display_name, known_room, confidence_lvl,
                        gender, age_estimate, face_quality,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.person_session_map psm
-                        JOIN enroll.camera_clip_results ccr
-                          ON ccr.enroll_session_id = psm.enroll_session_id
-                        WHERE psm.person_id = pp.id
-                          AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS face_event_id
+                       {_face_event_sql('pp.id')} AS face_event_id
                 FROM enroll.person_profiles pp
                 WHERE is_active
                   AND (display_name ILIKE %(q)s OR known_room ILIKE %(q)s)
@@ -265,14 +285,7 @@ def list_profiles(
                        pp.face_quality, pp.face_source_cam, pp.face_frame_count,
                        pp.age_estimate, pp.gender, pp.appearance_notes,
                        pp.enroll_count, pp.last_seen_ts, pp.body_ratio,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.person_session_map psm
-                        JOIN enroll.camera_clip_results ccr
-                          ON ccr.enroll_session_id = psm.enroll_session_id
-                        WHERE psm.person_id = pp.id
-                          AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS face_event_id
+                       {_face_event_sql('pp.id')} AS face_event_id
                 FROM enroll.person_profiles pp
                 WHERE {' AND '.join(filters)}
                 ORDER BY pp.last_seen_ts DESC
@@ -286,33 +299,22 @@ def list_profiles(
 def get_profile(person_id: str, _=Depends(require_auth)):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT id, display_name, known_room, confidence_lvl,
                        face_quality, face_source_cam, face_frame_count,
                        age_estimate, gender, appearance_notes,
                        enroll_count, first_seen_ts, last_seen_ts, body_ratio,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.person_session_map psm
-                        JOIN enroll.camera_clip_results ccr
-                          ON ccr.enroll_session_id = psm.enroll_session_id
-                        WHERE psm.person_id = pp.id
-                          AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS face_event_id
+                       {_face_event_sql('pp.id')} AS face_event_id
                 FROM enroll.person_profiles pp WHERE id = %(pid)s
             """, {"pid": person_id})
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404)
 
-            cur.execute("""
+            cur.execute(f"""
                 SELECT es.id, es.door_id, es.direction, es.room_label, es.event_time_vn,
                        es.status, es.overall_quality, psm.is_new, psm.merge_sim,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.camera_clip_results ccr
-                        WHERE ccr.enroll_session_id = es.id AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS snap_event_id
+                       {_snap_event_sql('es.id')} AS snap_event_id
                 FROM enroll.enroll_sessions es
                 JOIN enroll.person_session_map psm ON psm.enroll_session_id = es.id
                 WHERE psm.person_id = %(pid)s
@@ -412,12 +414,7 @@ def get_occupancy(
                        pp.appearance_notes, rs.entry_ts, rs.exit_ts, rs.entry_confidence,
                        EXTRACT(EPOCH FROM (COALESCE(rs.exit_ts, now()) - rs.entry_ts)) / 3600.0 AS hours_in_room,
                        (rs.exit_ts IS NULL) AS active,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.person_session_map psm
-                        JOIN enroll.camera_clip_results ccr ON ccr.enroll_session_id = psm.enroll_session_id
-                        WHERE psm.person_id = pp.id AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS face_event_id
+                       {_face_event_sql('pp.id')} AS face_event_id
                 FROM enroll.room_stays rs
                 JOIN enroll.person_profiles pp ON pp.id = rs.person_id
                 WHERE {' AND '.join(where)} AND pp.is_active
@@ -667,20 +664,13 @@ def backfill(body: dict, _=Depends(require_auth)):
 
             count = 0
             for r in rows:
-                cur.execute("""
+                cur.execute(f"""
                     INSERT INTO enroll.job_queue
                         (door_id, unlock_id, event_time_vn, room_label, direction,
                          status, scheduled_at)
                     VALUES (%(d)s, %(u)s, %(t)s, %(r)s, %(dir)s, 'pending', now())
                     ON CONFLICT (door_id, unlock_id, direction) DO UPDATE
-                        SET status        = 'pending',
-                            attempt_count = 0,
-                            scheduled_at  = now(),
-                            last_error    = NULL,
-                            locked_by     = NULL,
-                            locked_at     = NULL,
-                            started_at    = NULL,
-                            finished_at   = NULL
+                        SET {_JOB_RESET_SET}
                 """, {"d": str(r["door_id"]), "u": str(r["unlock_id"]),
                       "t": r["event_time_vn"], "r": r["room_label"], "dir": direction})
                 if cur.rowcount:
@@ -711,16 +701,8 @@ def retry_job(job_id: int, _=Depends(require_auth)):
     with get_conn() as conn:
         conn.autocommit = False
         with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE enroll.job_queue SET
-                    status        = 'pending',
-                    attempt_count = 0,
-                    scheduled_at  = now(),
-                    last_error    = NULL,
-                    locked_by     = NULL,
-                    locked_at     = NULL,
-                    started_at    = NULL,
-                    finished_at   = NULL
+            cur.execute(f"""
+                UPDATE enroll.job_queue SET {_JOB_RESET_SET}
                 WHERE id=%(jid)s AND status IN ('failed','skipped')
             """, {"jid": job_id})
             if cur.rowcount == 0:
@@ -753,16 +735,8 @@ def retry_session(session_id: str, _=Depends(require_auth)):
                 WHERE id = %(id)s
             """, {"id": session_id})
 
-            cur.execute("""
-                UPDATE enroll.job_queue SET
-                    status        = 'pending',
-                    attempt_count = 0,
-                    scheduled_at  = now(),
-                    last_error    = NULL,
-                    locked_by     = NULL,
-                    locked_at     = NULL,
-                    started_at    = NULL,
-                    finished_at   = NULL
+            cur.execute(f"""
+                UPDATE enroll.job_queue SET {_JOB_RESET_SET}
                 WHERE id = %(jid)s
             """, {"jid": job_id})
         conn.commit()
@@ -1013,18 +987,12 @@ def get_gate_session_detail(door_id: str, _=Depends(require_auth)):
                 """, {"sid": row["enroll_session_id"]})
                 camera_clips = cur.fetchall()
 
-                cur.execute("""
+                cur.execute(f"""
                     SELECT pp.id, pp.display_name, pp.known_room, pp.confidence_lvl,
                            pp.face_quality, pp.gender, pp.age_estimate,
                            pp.enroll_count, pp.last_seen_ts,
                            psm.is_new, psm.merge_sim,
-                           (SELECT ccr2.frigate_event_id
-                            FROM enroll.person_session_map psm2
-                            JOIN enroll.camera_clip_results ccr2
-                              ON ccr2.enroll_session_id = psm2.enroll_session_id
-                            WHERE psm2.person_id = pp.id AND ccr2.frigate_event_id IS NOT NULL
-                            ORDER BY ccr2.stopped_here DESC, ccr2.confidence DESC NULLS LAST
-                            LIMIT 1) AS face_event_id
+                           {_face_event_sql('pp.id')} AS face_event_id
                     FROM enroll.person_profiles pp
                     JOIN enroll.person_session_map psm ON psm.person_id = pp.id
                     WHERE psm.enroll_session_id = %(sid)s
@@ -1137,13 +1105,7 @@ def room_day_profiles(
             cur.execute(f"""
                 SELECT DISTINCT pp.id, pp.display_name, pp.known_room, pp.confidence_lvl,
                        pp.gender, pp.age_estimate, pp.face_quality,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.person_session_map psm2
-                        JOIN enroll.camera_clip_results ccr
-                          ON ccr.enroll_session_id = psm2.enroll_session_id
-                        WHERE psm2.person_id = pp.id AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS face_event_id
+                       {_face_event_sql('pp.id')} AS face_event_id
                 FROM enroll.person_profiles pp
                 JOIN enroll.person_session_map psm ON psm.person_id = pp.id
                 JOIN enroll.enroll_sessions es ON es.id = psm.enroll_session_id
@@ -1212,16 +1174,14 @@ def assign_gate_session_room(door_id: str, body: dict, user: str = Depends(requi
                 session_id = str(cur.fetchone()["id"])
 
             # Đưa vào hàng đợi để worker f87 enroll lại với phòng đã biết
-            cur.execute("""
+            cur.execute(f"""
                 INSERT INTO enroll.job_queue
                     (door_id, unlock_id, event_time_vn, room_label, direction,
                      status, scheduled_at)
                 VALUES (%(d)s, %(u)s, %(t)s, %(r)s, %(dir)s, 'pending', now())
                 ON CONFLICT (door_id, unlock_id, direction) DO UPDATE
-                    SET status = 'pending', attempt_count = 0, scheduled_at = now(),
-                        room_label = EXCLUDED.room_label, last_error = NULL,
-                        locked_by = NULL, locked_at = NULL,
-                        started_at = NULL, finished_at = NULL
+                    SET {_JOB_RESET_SET},
+                        room_label = EXCLUDED.room_label
             """, {"d": door_id, "u": str(unlock_id), "t": gate["event_time_vn"],
                   "r": room, "dir": gate["direction"]})
 
@@ -1328,12 +1288,7 @@ def review_queue(
                        vs.recognized_person_id, vs.recognition_sim,
                        vs.recognized_name, vs.overall_quality,
                        vs.error_msg, vs.warnings,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.camera_clip_results ccr
-                        WHERE ccr.enroll_session_id = vs.id
-                          AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.stopped_here DESC, ccr.confidence DESC NULLS LAST
-                        LIMIT 1) AS snap_event_id
+                       {_snap_event_sql('vs.id')} AS snap_event_id
                 FROM enroll.v_sessions vs
                 WHERE {where}
                 ORDER BY vs.event_time_vn DESC
@@ -1353,7 +1308,7 @@ def list_duplicates(
     """Tìm cặp profile có face_embedding tương tự nhau (potential duplicates)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT
                     a.id           AS id_a,
                     a.display_name AS name_a,
@@ -1370,18 +1325,8 @@ def list_duplicates(
                     b.gender       AS gender_b,
                     b.age_estimate AS age_b,
                     (1 - (a.face_embedding <=> b.face_embedding))::double precision AS similarity,
-                    (SELECT ccr.frigate_event_id
-                     FROM enroll.person_session_map psm
-                     JOIN enroll.camera_clip_results ccr
-                       ON ccr.enroll_session_id = psm.enroll_session_id
-                     WHERE psm.person_id = a.id AND ccr.frigate_event_id IS NOT NULL
-                     ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_a,
-                    (SELECT ccr.frigate_event_id
-                     FROM enroll.person_session_map psm
-                     JOIN enroll.camera_clip_results ccr
-                       ON ccr.enroll_session_id = psm.enroll_session_id
-                     WHERE psm.person_id = b.id AND ccr.frigate_event_id IS NOT NULL
-                     ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_b
+                    {_face_event_sql('a.id')} AS face_event_a,
+                    {_face_event_sql('b.id')} AS face_event_b
                 FROM enroll.person_profiles a
                 JOIN enroll.person_profiles b ON b.id > a.id
                 WHERE a.is_active AND b.is_active
@@ -1457,16 +1402,11 @@ def get_duplicate_cluster(
     """Chi tiết một cluster: primary profile + tất cả profiles tương tự."""
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT id, display_name, known_room, confidence_lvl,
                        face_quality, gender, age_estimate, enroll_count,
                        first_seen_ts, last_seen_ts,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.person_session_map psm
-                        JOIN enroll.camera_clip_results ccr
-                          ON ccr.enroll_session_id = psm.enroll_session_id
-                        WHERE psm.person_id = pp.id AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_id
+                       {_face_event_sql('pp.id')} AS face_event_id
                 FROM enroll.person_profiles pp
                 WHERE id = %(cid)s AND is_active
             """, {"cid": cluster_id})
@@ -1474,17 +1414,12 @@ def get_duplicate_cluster(
             if not primary:
                 raise HTTPException(404, "Profile not found")
 
-            cur.execute("""
+            cur.execute(f"""
                 SELECT b.id, b.display_name, b.known_room, b.confidence_lvl,
                        b.face_quality, b.gender, b.age_estimate, b.enroll_count,
                        b.first_seen_ts, b.last_seen_ts,
                        (1 - (a.face_embedding <=> b.face_embedding))::double precision AS similarity,
-                       (SELECT ccr.frigate_event_id
-                        FROM enroll.person_session_map psm
-                        JOIN enroll.camera_clip_results ccr
-                          ON ccr.enroll_session_id = psm.enroll_session_id
-                        WHERE psm.person_id = b.id AND ccr.frigate_event_id IS NOT NULL
-                        ORDER BY ccr.confidence DESC NULLS LAST LIMIT 1) AS face_event_id
+                       {_face_event_sql('b.id')} AS face_event_id
                 FROM enroll.person_profiles a
                 JOIN enroll.person_profiles b ON b.id != a.id
                 WHERE a.id = %(cid)s
@@ -1592,20 +1527,13 @@ def re_enroll_profile(person_id: str, _=Depends(require_auth)):
             count = 0
             last_job_id = None
             for ses in sessions:
-                cur.execute("""
+                cur.execute(f"""
                     INSERT INTO enroll.job_queue
                         (door_id, unlock_id, event_time_vn, room_label,
                          direction, status, scheduled_at, max_attempts)
                     VALUES (%(d)s,%(u)s,%(t)s,%(r)s,'incoming','pending',now(),3)
                     ON CONFLICT (door_id, unlock_id, direction) DO UPDATE
-                        SET status        = 'pending',
-                            attempt_count = 0,
-                            scheduled_at  = now(),
-                            last_error    = NULL,
-                            locked_by     = NULL,
-                            locked_at     = NULL,
-                            started_at    = NULL,
-                            finished_at   = NULL
+                        SET {_JOB_RESET_SET}
                     RETURNING id
                 """, {
                     "d": ses["door_id"], "u": ses["unlock_id"],

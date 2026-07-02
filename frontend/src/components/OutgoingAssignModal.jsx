@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Modal, Btn, Icon, Avatar, Badge, Spinner } from './UI'
-import { CONF } from '../pages/enrollData'
+import { Modal, Btn, Icon, Avatar, Spinner } from './UI'
+import { ConfBadge } from '../pages/enroll/EnrollShell'
 import { getRoomCodes, getRoomDayProfiles, assignGateSession, assignGateSessionRoom } from '../api/client'
 import { snapUrl } from '../utils'
 
@@ -70,19 +70,16 @@ export function OutgoingAssignModal({ doorId, ts, defaultRoom = '', onAssigned, 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 190, overflowY: 'auto', marginBottom: 12 }}>
               {loadingP ? <div style={{ padding: 12, textAlign: 'center' }}><Spinner size={14} /></div>
                 : profiles.length === 0 ? <div style={{ fontSize: 11.5, color: 'var(--txl)', padding: '4px 2px' }}>Không có ai enroll incoming cho phòng này trong cửa sổ phòng — cứ gán phòng, worker sẽ tự xác định.</div>
-                : profiles.map(p => {
-                  const [ck, cl] = CONF[p.confidence_lvl] ?? ['dim', 'unknown']
-                  return (
-                    <div key={p.id} onClick={() => !saving && assignProfile(p.id)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 10px', borderRadius: 9, cursor: saving ? 'default' : 'pointer', border: '1px solid var(--bg2)' }}>
-                      <Avatar gender={p.gender} size={40} src={snapUrl(p.face_event_id)} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>{p.display_name || 'Chưa đặt tên'}</div>
-                        <div style={{ fontSize: 11, color: 'var(--tlo)', fontFamily: 'var(--mono)' }}>{p.known_room}</div>
-                      </div>
-                      <Badge kind={ck}>{cl}</Badge>
+                : profiles.map(p => (
+                  <div key={p.id} onClick={() => !saving && assignProfile(p.id)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 10px', borderRadius: 9, cursor: saving ? 'default' : 'pointer', border: '1px solid var(--bg2)' }}>
+                    <Avatar gender={p.gender} size={40} src={snapUrl(p.face_event_id)} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{p.display_name || 'Chưa đặt tên'}</div>
+                      <div style={{ fontSize: 11, color: 'var(--tlo)', fontFamily: 'var(--mono)' }}>{p.known_room}</div>
                     </div>
-                  )
-                })
+                    <ConfBadge level={p.confidence_lvl} />
+                  </div>
+                ))
               }
             </div>
             <Btn variant="primary" onClick={assignRoomOnly} disabled={saving} style={{ width: '100%' }}>

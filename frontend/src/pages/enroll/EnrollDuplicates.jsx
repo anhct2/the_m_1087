@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Avatar, Badge, Btn, Spinner, Empty, Icon } from '../../components/UI'
-import { CONF } from '../enrollData'
+import { Avatar, Btn, Loading, Empty, Icon } from '../../components/UI'
 import { getDuplicates, dismissCluster } from '../../api/client'
 import { snapUrl, fmtShortDate } from '../../utils'
-import { SubHeader } from './EnrollShell'
+import { SubHeader, ConfBadge } from './EnrollShell'
 
 export default function EnrollDuplicates() {
   const navigate = useNavigate()
@@ -30,7 +29,7 @@ export default function EnrollDuplicates() {
       } />
 
       {loading ? (
-        <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner size={20} /></div>
+        <Loading />
       ) : !clusters.length ? (
         <Empty message="Không phát hiện hồ sơ trùng lặp" />
       ) : (
@@ -45,7 +44,6 @@ export default function EnrollDuplicates() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
                 {cluster.members.map((m, i) => {
-                  const [ck, cl] = CONF[m.confidence_lvl] ?? ['dim', m.confidence_lvl ?? 'unknown']
                   return (
                     <div key={m.id} onClick={() => navigate(`/enroll/profiles/${m.id}`)} title="Mở hồ sơ" style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--ln)', cursor: 'pointer', background: 'var(--bg2)' }}>
                       <Avatar gender={m.gender} size={42} src={snapUrl(m.face_event_id)} />
@@ -58,7 +56,7 @@ export default function EnrollDuplicates() {
                         </div>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                        <Badge kind={ck}>{cl}</Badge>
+                        <ConfBadge level={m.confidence_lvl} />
                         {i > 0 && <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--am)' }}>{Math.round(m.similarity * 100)}%</span>}
                       </div>
                       <Icon name="chevron" size={14} style={{ color: 'var(--tlo)' }} />
