@@ -18,7 +18,8 @@ import requests
 from config import (
     CAMERA_ORDER, OUTGOING_CAMERA_ORDER, CAM,
     CONF_STOP, CONF_MEDIUM, CONF_LOW,
-    FACE_POSSIBLE, MERGE_FACE_SIM, RECOGNIZE_SIM_MIN, SNAP_OK_THRESHOLD,
+    FACE_POSSIBLE, MERGE_FACE_SIM, MERGE_FACE_SIM_CROSS,
+    RECOGNIZE_SIM_MIN, SNAP_OK_THRESHOLD,
     MAX_FRAMES, SAMPLE_FPS, EARLY_EXIT_SCORE,
     FRIGATE_URL, FRIGATE_USER, FRIGATE_PASS,
 )
@@ -131,7 +132,7 @@ def run_job(job_id: int, door_id: str, unlock_id: str,
 
         persons_enrolled = 0
         if accumulated:
-            persons_enrolled = _upsert_persons(accumulated, room_label, sid)
+            persons_enrolled = _upsert_persons(accumulated, room_label, sid, event_time_vn)
 
         status = ("enrolled"      if best_conf >= CONF_MEDIUM else
                   "low_quality"   if best_conf >= CONF_LOW else
@@ -374,7 +375,8 @@ def run_outgoing_job(job_id: int, door_id: str, unlock_id: str,
         fail_job(job_id, str(e))
 
 
-def _upsert_persons(persons: List[PersonFeatures], room_label: str, sid: str) -> int:
+def _upsert_persons(persons: List[PersonFeatures], room_label: str, sid: str,
+                    event_time_vn=None) -> int:
     enrolled = 0
     for p in persons:
         fe_list = p.face_embedding.tolist() if p.face_embedding is not None else None
@@ -383,7 +385,11 @@ def _upsert_persons(persons: List[PersonFeatures], room_label: str, sid: str) ->
 
         existing_id = merge_sim = None
         if fe_list and p.face_quality >= FACE_POSSIBLE:
-            match = find_similar_profile(fe_list, room_label, MERGE_FACE_SIM)
+            # Room-window aware: khác cụm cửa sổ phòng (phòng có thể đã đổi
+            # khách) thì cần MERGE_FACE_SIM_CROSS mới merge vào profile cũ.
+            match = find_similar_profile(fe_list, room_label, MERGE_FACE_SIM,
+                                         event_ts=event_time_vn,
+                                         cross_threshold=MERGE_FACE_SIM_CROSS)
             if match: existing_id, merge_sim = match
 
         fq = p.face_quality if p.face_quality >= FACE_POSSIBLE else None

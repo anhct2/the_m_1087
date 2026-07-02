@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Outlet, useOutletContext } from 'react-router-dom'
 import { Icon, Btn } from '../../components/UI'
-import { getEnrollSummary, getEnrollQueue, getWorkerStatus, postBackfill, postReleaseStuck } from '../../api/client'
+import { getEnrollSummary, getEnrollQueue, getWorkerStatus, postBackfill, postReleaseStuck, postMergeRoomProfiles } from '../../api/client'
 
 /**
  * Khung Enroll: chỉ cung cấp "bus làm mới" cho các màn con qua context.
@@ -56,6 +56,14 @@ export function EnrollOverview({ onRefresh }) {
       .catch(e => setMsg('Lỗi giải phóng: ' + (e?.response?.data?.detail || e.message)))
       .finally(() => { setBusy(''); loadHeader(); onRefresh?.() })
   }
+  // Job gộp profile theo phòng + cụm cửa sổ thời gian (worker cũng tự chạy định kỳ)
+  function doMergeRoom() {
+    setBusy('merge'); setMsg('')
+    postMergeRoomProfiles({ days: 7 })
+      .then(r => setMsg(`Đã gộp ${r.data.merged ?? 0} cặp hồ sơ trùng (theo phòng + cụm thời gian)`))
+      .catch(e => setMsg('Lỗi gộp hồ sơ: ' + (e?.response?.data?.detail || e.message)))
+      .finally(() => { setBusy(''); loadHeader(); onRefresh?.() })
+  }
   function doRefresh() {
     setBusy('refresh'); setMsg('')
     loadHeader(); onRefresh?.()
@@ -89,6 +97,7 @@ export function EnrollOverview({ onRefresh }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {msg && <span style={{ fontSize: 11.5, color: 'var(--tlo)' }}>{msg}</span>}
           <Btn variant="ghost" onClick={doBackfill} disabled={!!busy}><Icon name="refresh" size={13} />{busy === 'backfill' ? 'Đang nạp…' : 'Nạp lại 1 ngày'}</Btn>
+          <Btn variant="ghost" onClick={doMergeRoom} disabled={!!busy}><Icon name="refresh" size={13} />{busy === 'merge' ? 'Đang gộp…' : 'Gộp hồ sơ trùng'}</Btn>
           <Btn variant="ghost" onClick={doRelease} disabled={!!busy}><Icon name="refresh" size={13} />{busy === 'release' ? 'Đang xử lý…' : 'Giải phóng job kẹt'}</Btn>
           <Btn variant="ghost" onClick={doRefresh} disabled={!!busy}><Icon name="refresh" size={13} />Làm mới</Btn>
         </div>

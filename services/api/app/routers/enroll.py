@@ -426,6 +426,129 @@ def get_occupancy(
             return [dict(r) for r in cur.fetchall()]
 
 
+# ── Lưu trú theo cửa sổ phòng (12h trưa → 12h trưa hôm sau) ─────
+# Quy tắc: 1 "ngày phòng" D = [D 12:00 VN, D+1 12:00 VN). Mọi phép map
+# người ↔ phòng theo ngày dùng cửa sổ này (enroll.room_window_date).
+
+@router.get("/stays/by-gate")
+def stays_by_gate(
+    date_from: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to:   Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    room:      Optional[str] = None,
+    direction: Optional[str] = Query(None, pattern="^(incoming|outgoing)$"),
+    limit:     int = Query(500, ge=1, le=2000),
+    _=Depends(require_auth),
+):
+    """
+    Lưu trú theo GATE LOG: ngày (cửa sổ phòng) → phòng → gate log → profile.
+    Bám vào v_room_day_gate (gốc là v_gate_sessions = đúng tập Gate Log).
+    Không truyền ngày → 7 cửa sổ phòng gần nhất.
+    """
+    filters = ["1=1"]
+    params: dict = {"limit": limit}
+    if date_from:
+        filters.append("window_date >= %(date_from)s"); params["date_from"] = date_from
+    else:
+        filters.append("window_date >= enroll.room_window_date(now()) - 6")
+    if date_to:
+        filters.append("window_date <= %(date_to)s"); params["date_to"] = date_to
+    if room:
+        rooms = [r.strip() for r in room.split(",") if r.strip()]
+        filters.append("room_label = ANY(%(rooms)s)"); params["rooms"] = rooms
+    if direction:
+        filters.append("direction = %(direction)s"); params["direction"] = direction
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT * FROM enroll.v_room_day_gate
+                WHERE {' AND '.join(filters)}
+                ORDER BY window_date DESC, room_label NULLS LAST, event_time_vn
+                LIMIT %(limit)s
+            """, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+@router.get("/stays/by-profile")
+def stays_by_profile(
+    date_from: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to:   Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    room:      Optional[str] = None,
+    limit:     int = Query(500, ge=1, le=2000),
+    _=Depends(require_auth),
+):
+    """
+    Lưu trú theo PROFILE: ngày (cửa sổ phòng) → phòng → profile, kèm số lượt
+    vào/ra trong cửa sổ đó → trả lời "phòng đó có mấy người theo từng ngày".
+    Không truyền ngày → 7 cửa sổ phòng gần nhất.
+    """
+    filters = ["1=1"]
+    params: dict = {"limit": limit}
+    if date_from:
+        filters.append("window_date >= %(date_from)s"); params["date_from"] = date_from
+    else:
+        filters.append("window_date >= enroll.room_window_date(now()) - 6")
+    if date_to:
+        filters.append("window_date <= %(date_to)s"); params["date_to"] = date_to
+    if room:
+        rooms = [r.strip() for r in room.split(",") if r.strip()]
+        filters.append("room_label = ANY(%(rooms)s)"); params["rooms"] = rooms
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT * FROM enroll.v_room_day_profiles
+                WHERE {' AND '.join(filters)}
+                ORDER BY window_date DESC, room_label, first_seen_ts
+                LIMIT %(limit)s
+            """, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ── Job gộp profile theo phòng + cụm cửa sổ thời gian ───────────
+@router.post("/merge-room-profiles")
+def merge_room_profiles_endpoint(body: Optional[dict] = None, _=Depends(require_auth)):
+    """
+    Chạy tay job gộp profile (worker-enroll cũng tự chạy định kỳ).
+    Body (tuỳ chọn): { "days": 7, "room": "P.302" }
+    Cùng phòng + cùng/kề cửa sổ (khách ở dài ngày) → gộp khi sim >= 0.55;
+    khác cụm cửa sổ (phòng có thể đã đổi khách) → chỉ gộp khi sim >= 0.78.
+    """
+    body = body or {}
+    days = int(body.get("days", 7))
+    room = (body.get("room") or "").strip() or None
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM enroll.merge_room_profiles(%(d)s, 0.55, 0.78, %(room)s)",
+                {"d": days, "room": room},
+            )
+            merges = [dict(r) for r in cur.fetchall()]
+        conn.commit()
+    return {"merged": len(merges), "pairs": merges}
+
+
+def _auto_merge_room(conn, room: str) -> int:
+    """Best-effort: gộp lại profile của MỘT phòng ngay sau khi gán tay
+    (gán tay outgoing = định danh luôn → cần gom profile cùng người lại).
+    Không làm hỏng request nếu migration chưa được áp dụng."""
+    if not room:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM enroll.merge_room_profiles(7, 0.55, 0.78, %(room)s)",
+                {"room": room},
+            )
+            n = int(cur.fetchone()["n"] or 0)
+        conn.commit()
+        return n
+    except Exception:
+        conn.rollback()
+        return 0
+
+
 # ── Job queue ────────────────────────────────────────────────────
 @router.get("/jobs")
 def list_jobs(
@@ -780,7 +903,8 @@ def assign_session(session_id: str, body: dict, user: str = Depends(require_auth
                 new_room=new_room, source="enroll", user=user,
             )
         conn.commit()
-    return {"ok": True, "profile_id": profile_id}
+        merged = _auto_merge_room(conn, new_room or ses["room_label"])
+    return {"ok": True, "profile_id": profile_id, "auto_merged": merged}
 
 
 # ── Gate Log <-> Enroll unified sessions (1:1 với gate_sessions_v2) ──
@@ -982,21 +1106,35 @@ def assign_gate_session(door_id: str, body: dict, user: str = Depends(require_au
                 new_room=new_room, source=source, user=user,
             )
         conn.commit()
-    return {"ok": True, "profile_id": profile_id, "enroll_session_id": session_id}
+        merged = _auto_merge_room(conn, new_room or gate["room_label"])
+    return {"ok": True, "profile_id": profile_id, "enroll_session_id": session_id,
+            "auto_merged": merged}
 
 
-# ── Profiles đã enroll (incoming) cho 1 phòng trong 1 ngày ──────
+# ── Profiles đã enroll (incoming) cho 1 phòng trong 1 CỬA SỔ PHÒNG ──
 # Dùng cho picker khi gán tay outgoing: chỉ hiện người thực sự đã vào phòng
-# đó trong ngày, không lục lại toàn bộ lịch sử (ảnh nhỏ khó chọn).
+# đó trong cùng cửa sổ phòng (12h trưa → 12h trưa hôm sau) với lượt Ra —
+# lượt ra 9h sáng vẫn thấy được khách vào chiều hôm trước.
 @router.get("/room-day-profiles")
 def room_day_profiles(
     room: str = Query(...),
-    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ts:   Optional[str] = Query(None, description="ISO timestamp của lượt Ra — xác định cửa sổ phòng"),
+    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+                                description="window_date trực tiếp (fallback khi không có ts)"),
     _=Depends(require_auth),
 ):
+    if not ts and not date:
+        raise HTTPException(400, "Cần ts hoặc date")
+    if ts:
+        window_cond = "enroll.room_window_date(es.event_time_vn) = enroll.room_window_date(%(ts)s::timestamptz)"
+        params = {"room": room, "ts": ts}
+    else:
+        window_cond = "enroll.room_window_date(es.event_time_vn) = %(date)s::date"
+        params = {"room": room, "date": date}
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT DISTINCT pp.id, pp.display_name, pp.known_room, pp.confidence_lvl,
                        pp.gender, pp.age_estimate, pp.face_quality,
                        (SELECT ccr.frigate_event_id
@@ -1012,9 +1150,9 @@ def room_day_profiles(
                 WHERE pp.is_active
                   AND es.direction = 'incoming'
                   AND es.room_label = %(room)s
-                  AND (es.event_time_vn AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = %(date)s
+                  AND {window_cond}
                 ORDER BY pp.display_name NULLS LAST
-            """, {"room": room, "date": date})
+            """, params)
             return [dict(r) for r in cur.fetchall()]
 
 
@@ -1152,21 +1290,29 @@ def release_stuck_endpoint(_=Depends(require_auth)):
 # ── Review queue ────────────────────────────────────────────────
 @router.get("/review")
 def review_queue(
-    days:   int = Query(7, ge=1, le=90),
-    limit:  int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    days:        int = Query(7, ge=1, le=90),
+    limit:       int = Query(50, ge=1, le=200),
+    offset:      int = Query(0, ge=0),
+    min_persons: int = Query(3, ge=2, le=10),
     _=Depends(require_auth),
 ):
-    """Sessions cần xử lý thủ công: failed hoặc enrolled không nhận diện được."""
+    """
+    Sessions cần xử lý thủ công:
+      - failed, hoặc enrolled nhưng không gắn được hồ sơ,
+      - hoặc phát hiện NHIỀU người (>= min_persons, mặc định 3) trong một
+        phiên → nghi ngờ, cần người vận hành xác nhận số người trong phòng.
+    """
     where = """
         vs.event_time_vn >= now() - (%(days)s || ' days')::interval
         AND (
             vs.status = 'failed'
             OR (vs.status = 'enrolled' AND vs.recognized_person_id IS NULL)
+            OR vs.person_count >= %(min_persons)s
         )
     """
-    params_count = {"days": days}
-    params_list  = {"days": days, "limit": limit, "offset": offset}
+    params_count = {"days": days, "min_persons": min_persons}
+    params_list  = {"days": days, "min_persons": min_persons,
+                    "limit": limit, "offset": offset}
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -1377,44 +1523,19 @@ def merge_profiles(body: dict, _=Depends(require_auth)):
             if not cur.fetchone():
                 raise HTTPException(404, "Primary profile not found")
 
+            # Logic gộp nằm trong enroll.merge_profile_pair — dùng chung với
+            # job tự động (merge_room_profiles), kèm audit profile_merge_log.
+            merged = 0
             for mid in merge_ids:
-                cur.execute("""
-                    INSERT INTO enroll.person_session_map
-                        (person_id, enroll_session_id, is_new, merge_sim)
-                    SELECT %(primary)s, enroll_session_id, is_new, merge_sim
-                    FROM enroll.person_session_map
-                    WHERE person_id = %(mid)s
-                    ON CONFLICT (person_id, enroll_session_id) DO NOTHING
-                """, {"primary": primary_id, "mid": mid})
-
                 cur.execute(
-                    "DELETE FROM enroll.person_session_map WHERE person_id = %(mid)s",
-                    {"mid": mid},
-                )
-                cur.execute(
-                    "UPDATE enroll.room_stays SET person_id = %(primary)s WHERE person_id = %(mid)s",
+                    "SELECT enroll.merge_profile_pair(%(primary)s::uuid, %(mid)s::uuid, NULL, 'manual') AS ok",
                     {"primary": primary_id, "mid": mid},
                 )
-                cur.execute("""
-                    UPDATE enroll.enroll_sessions
-                    SET recognized_person_id = %(primary)s
-                    WHERE recognized_person_id = %(mid)s
-                """, {"primary": primary_id, "mid": mid})
-                cur.execute(
-                    "UPDATE enroll.person_profiles SET is_active = false, updated_at = now() WHERE id = %(mid)s",
-                    {"mid": mid},
-                )
-
-            cur.execute("""
-                UPDATE enroll.person_profiles
-                SET enroll_count = (
-                    SELECT COUNT(*) FROM enroll.person_session_map WHERE person_id = %(pid)s
-                ), updated_at = now()
-                WHERE id = %(pid)s
-            """, {"pid": primary_id})
+                if cur.fetchone()["ok"]:
+                    merged += 1
         conn.commit()
 
-    return {"ok": True, "primary_id": primary_id, "merged": len(merge_ids)}
+    return {"ok": True, "primary_id": primary_id, "merged": merged}
 
 
 @router.post("/duplicates/{cluster_id}/dismiss")

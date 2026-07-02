@@ -47,7 +47,10 @@ CONF_LOW    = 0.25
 
 FACE_CONFIDENT    = 0.45   # det_score >= này: dùng embedding
 FACE_POSSIBLE     = 0.30   # det_score >= này: lưu, flag thấp
-MERGE_FACE_SIM    = 0.40   # cosine sim >= này: same person → merge (incoming)
+MERGE_FACE_SIM    = 0.40   # cosine sim >= này: same person → merge (incoming, CÙNG cụm cửa sổ phòng)
+# Khác cụm cửa sổ phòng (phòng có thể đã đổi khách) → chỉ merge khi sim rất cao,
+# tránh gộp khách mới vào profile của khách tuần trước cùng phòng.
+MERGE_FACE_SIM_CROSS = 0.75
 RECOGNIZE_SIM_MIN = 0.55   # cosine sim >= này: accept match (outgoing recognition)
 
 SNAP_OK_THRESHOLD = 0.65   # snapshot đủ tốt → skip video
@@ -66,6 +69,14 @@ JOB_DELAY_S           = int(os.environ.get("JOB_DELAY_S",           "90"))
 OUTGOING_JOB_DELAY_S  = int(os.environ.get("OUTGOING_JOB_DELAY_S",  "150"))
 MAX_CONCURRENT        = int(os.environ.get("MAX_CONCURRENT",         "2"))
 STUCK_TIMEOUT_M  = 30
+
+# ── Job gộp profile theo phòng + cụm cửa sổ thời gian ────────
+# 1 người ở 1 phòng nhiều ngày sẽ sinh nhiều profile qua các lượt vào →
+# job định kỳ gọi enroll.merge_room_profiles() để gộp lại làm 1.
+MERGE_JOB_EVERY_TICKS  = int(os.environ.get("MERGE_JOB_EVERY_TICKS", "20"))  # ~10 phút với poll 30s
+MERGE_LOOKBACK_DAYS    = int(os.environ.get("MERGE_LOOKBACK_DAYS",   "7"))
+MERGE_SIM_SAME_WINDOW  = 0.55   # cùng/kề cửa sổ phòng (khách ở dài ngày)
+MERGE_SIM_CROSS_WINDOW = 0.78   # khác cụm (phòng đổi khách liên tục) → cần sim rất cao
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 LOG_FILE  = os.environ.get("LOG_FILE",  "/app/logs/worker_enroll.log")

@@ -95,7 +95,13 @@ export const getGateSessions    = (params)      => api.get('/api/enroll/gate-ses
 export const getGateSessionById = (doorId)      => api.get(`/api/enroll/gate-sessions/${doorId}`)
 export const assignGateSession  = (doorId, body) => api.post(`/api/enroll/gate-sessions/${doorId}/assign`, body)
 export const assignGateSessionRoom = (doorId, body) => api.post(`/api/enroll/gate-sessions/${doorId}/assign-room`, body)
-export const getRoomDayProfiles = (room, date) => api.get('/api/enroll/room-day-profiles', { params: { room, date } })
+// ts = event_time của lượt Ra → BE xác định cửa sổ phòng (12h trưa → 12h trưa)
+export const getRoomDayProfiles = (room, ts) => api.get('/api/enroll/room-day-profiles', { params: { room, ts } })
+
+// ── Lưu trú theo cửa sổ phòng + job gộp profile ──────────────────
+export const getStaysByGate        = (params) => api.get('/api/enroll/stays/by-gate', { params })
+export const getStaysByProfile     = (params) => api.get('/api/enroll/stays/by-profile', { params })
+export const postMergeRoomProfiles = (body)   => api.post('/api/enroll/merge-room-profiles', body || {})
 
 // ── Airbnb ────────────────────────────────────────────────────────
 export const getAirbnbCalendar      = (days = 30)            => api.get('/api/airbnb/calendar', { params: { days } })
